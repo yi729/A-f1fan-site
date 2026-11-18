@@ -1,0 +1,26 @@
+[Unit]
+Description=F1 数据中心（FastAPI 后端 + 静态前端）
+After=network.target
+
+[Service]
+Type=simple
+# 建议不要用 root 跑；如需 root 把下面两行改成 User=root
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/f1-site
+ExecStart=/usr/bin/python3 run.py
+Restart=always
+RestartSec=5
+
+Environment=F1_HOST=0.0.0.0
+Environment=F1_PORT=8000
+# 定时抓取间隔（小时），不设置默认 6
+Environment=SCRAPE_INTERVAL_HOURS=6
+# 抓取口令：设置后网页「手动抓取一次」需要输入该口令。请改成自己的随机串
+# Environment=SCRAPE_TOKEN=改成你自己的随机口令
+# AI 摘要密钥（可选，不设置则帖子只显示原文）
+# Environment=DEEPSEEK_API_KEY=sk-xxxx
+Environment=TZ=Asia/Shanghai
+
+[Install]
+WantedBy=multi-user.target
