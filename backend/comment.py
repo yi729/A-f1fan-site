@@ -77,6 +77,7 @@ def _norm(r):
         "text": bilibili._msg_text(((r.get("content") or {}).get("message") or "")),
         "like": r.get("like") or 0,
         "rcount": r.get("rcount") or 0,
+        "ctime": r.get("ctime") or 0,
         "is_sub": False,
     }
 
@@ -97,7 +98,7 @@ def _flatten_main(r, seen, out):
 
 
 def _sample_for_video(aid):
-    """分层采样，返回打散后的样本行列表与统计；样本不足返回空。"""
+    """分层采样，返回 (AI 样本行, 统计, 时间线样本)；样本不足返回空。"""
     seen = set()
     rows = []
     hot_end = False
@@ -154,9 +155,13 @@ def _sample_for_video(aid):
     for r in [r for r in rows if r["is_sub"]][:30]:
         add(r)
     if len(picked) < MIN_SAMPLES:
-        return [], {}
+        return [], {}, []
     lines = ["赞%d 回%d | %s" % (r["like"], r["rcount"], r["text"][:120]) for r in picked]
-    return lines, {"total": len(picked), "long": sum(1 for r in picked if len(r["text"]) >= LONG_MIN_LEN)}
+    samples = [{
+        "t": r["ctime"], "like": r["like"], "rcount": r["rcount"],
+        "text": r["text"][:120], "sub": r["is_sub"],
+    } for r in picked]
+    return lines, {"total": len(picked), "long": sum(1 for r in picked if len(r["text"]) >= LONG_MIN_LEN)}, samples
 
 
 def _aid_map(mid, group):
@@ -185,10 +190,74 @@ def _aid_by_bvid(bvid):
     return None
 
 
+SAMPLES_BACKFILL_BUDGET = 8  # 每轮最多补时间线样本的条数（只采样不重摘要）
+
+
+def _backfill_samples():
+    """已有观点汇总但缺时间线样本的行：只补采样，不重新调用 AI。"""
+    done = 0
+    errors = []
+    ups = [p for p in db.list_up_posts(limit=300)
+           if p.get("source_type") == "video" and p.get("mid")
+           and p.get("comment_summary") and not p.get("comment_samples")]
+    by_mid = {}
+    for p in ups:
+        by_mid.setdefault(p["mid"], []).append(p)
+    for mid, group in by_mid.items():
+        if done >= SAMPLES_BACKFILL_BUDGET:
+            break
+        aid_map = _aid_map(mid, group)
+        for p in group:
+            if done >= SAMPLES_BACKFILL_BUDGET:
+                break
+            bvid = p.get("source_id")
+            if not bvid or bvid not in aid_map:
+                continue
+            done += 1
+            try:
+                lines, _stats, samples = _sample_for_video(aid_map[bvid])
+            except Exception as e:
+                errors.append("%s 采样失败: %s" % (bvid, e))
+                time.sleep(SLEEP_BETWEEN)
+                continue
+            if not lines:
+                time.sleep(SLEEP_BETWEEN)
+                continue
+            db.set_up_post_comments(bvid, p["comment_summary"],
+                                    json.dumps(samples, ensure_ascii=False))
+            time.sleep(SLEEP_BETWEEN)
+    for p in db.list_posts():
+        if done >= SAMPLES_BACKFILL_BUDGET:
+            break
+        if (p.get("platform") or "") != "bilibili" or not p.get("source_id"):
+            continue
+        if not p.get("comment_summary") or p.get("comment_samples"):
+            continue
+        aid = _aid_by_bvid(p["source_id"])
+        if not aid:
+            continue
+        done += 1
+        try:
+            lines, _stats, samples = _sample_for_video(aid)
+        except Exception as e:
+            errors.append("%s 采样失败: %s" % (p["source_id"], e))
+            time.sleep(SLEEP_BETWEEN)
+            continue
+        if not lines:
+            time.sleep(SLEEP_BETWEEN)
+            continue
+        db.set_post_comments(p["source_id"], p["comment_summary"],
+                             json.dumps(samples, ensure_ascii=False))
+        time.sleep(SLEEP_BETWEEN)
+    return done, errors
+
+
 def _run():
     bilibili.load_cookie()
     summarize.load_config()
     now = time.time()
+    bf_done, bf_errors = _backfill_samples()
+    errors = list(bf_errors)
     posts = [p for p in db.list_up_posts(limit=300)
              if p.get("source_type") == "video" and p.get("mid")]
     targets = []
@@ -218,7 +287,7 @@ def _run():
                 continue
             done += 1
             try:
-                lines, _stats = _sample_for_video(aid_map[bvid])
+                lines, _stats, samples = _sample_for_video(aid_map[bvid])
             except Exception as e:
                 errors.append("%s 采样失败: %s" % (bvid, e))
                 time.sleep(SLEEP_BETWEEN)
@@ -230,7 +299,8 @@ def _run():
             if not raw:
                 errors.append("%s 观点聚类失败" % bvid)
             else:
-                db.set_up_post_comments(bvid, json.dumps(raw, ensure_ascii=False))
+                db.set_up_post_comments(bvid, json.dumps(raw, ensure_ascii=False),
+                                        json.dumps(samples, ensure_ascii=False))
             time.sleep(SLEEP_BETWEEN)
 
     # 帖子页的 B站帖子（不限 UP）：按 BV 号搜索解析 aid，只补近 30 天的
@@ -251,7 +321,7 @@ def _run():
             continue
         pdone += 1
         try:
-            lines, _stats = _sample_for_video(aid)
+            lines, _stats, samples = _sample_for_video(aid)
         except Exception as e:
             errors.append("%s 采样失败: %s" % (bvid, e))
             time.sleep(SLEEP_BETWEEN)
@@ -263,6 +333,7 @@ def _run():
         if not raw:
             errors.append("%s 观点聚类失败" % bvid)
         else:
-            db.set_post_comments(bvid, json.dumps(raw, ensure_ascii=False))
+            db.set_post_comments(bvid, json.dumps(raw, ensure_ascii=False),
+                                 json.dumps(samples, ensure_ascii=False))
         time.sleep(SLEEP_BETWEEN)
-    return {"checked": done + pdone, "errors": errors}
+    return {"checked": done + pdone, "backfilled": bf_done, "errors": errors}

@@ -50,6 +50,8 @@ def init(db_path):
             _conn.execute("ALTER TABLE posts ADD COLUMN comment_summary TEXT")
         if "comment_at" not in cols:
             _conn.execute("ALTER TABLE posts ADD COLUMN comment_at TEXT")
+        if "comment_samples" not in cols:
+            _conn.execute("ALTER TABLE posts ADD COLUMN comment_samples TEXT")
         # UP 主订阅与内容汇总
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS up_subscriptions (
@@ -87,6 +89,8 @@ def init(db_path):
             _conn.execute("ALTER TABLE up_posts ADD COLUMN comment_summary TEXT")
         if "comment_at" not in cols:
             _conn.execute("ALTER TABLE up_posts ADD COLUMN comment_at TEXT")
+        if "comment_samples" not in cols:
+            _conn.execute("ALTER TABLE up_posts ADD COLUMN comment_samples TEXT")
         # 用户账号与个人订阅
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS users (
@@ -263,24 +267,24 @@ def update_up_post_summary(source_type, source_id, summary, summary_type,
         _conn.commit()
 
 
-def set_up_post_comments(source_id, comment_summary):
-    """写入评论区观点汇总（JSON 字符串），并记录时间戳。"""
+def set_up_post_comments(source_id, comment_summary, comment_samples=None):
+    """写入评论区观点汇总（JSON 字符串）与时间线样本，并记录时间戳。"""
     with _lock:
         _conn.execute(
-            "UPDATE up_posts SET comment_summary=?, comment_at=? "
+            "UPDATE up_posts SET comment_summary=?, comment_samples=?, comment_at=? "
             "WHERE source_type='video' AND source_id=?",
-            (comment_summary, time.strftime("%Y-%m-%d %H:%M:%S"), source_id),
+            (comment_summary, comment_samples, time.strftime("%Y-%m-%d %H:%M:%S"), source_id),
         )
         _conn.commit()
 
 
-def set_post_comments(source_id, comment_summary):
-    """帖子页（posts 表）B站帖子的评论区观点汇总。"""
+def set_post_comments(source_id, comment_summary, comment_samples=None):
+    """帖子页（posts 表）B站帖子的评论区观点汇总与时间线样本。"""
     with _lock:
         _conn.execute(
-            "UPDATE posts SET comment_summary=?, comment_at=? "
+            "UPDATE posts SET comment_summary=?, comment_samples=?, comment_at=? "
             "WHERE platform='bilibili' AND source_id=?",
-            (comment_summary, time.strftime("%Y-%m-%d %H:%M:%S"), source_id),
+            (comment_summary, comment_samples, time.strftime("%Y-%m-%d %H:%M:%S"), source_id),
         )
         _conn.commit()
 

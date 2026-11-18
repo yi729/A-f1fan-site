@@ -973,6 +973,29 @@ function stanceClass(s) {
   return m[s] || "mid";
 }
 
+function fmtTime(t) {
+  if (!t) return "";
+  const diff = Math.max(0, Date.now() - new Date(t * 1000).getTime());
+  if (diff < 60e3) return "刚刚";
+  if (diff < 3600e3) return Math.floor(diff / 60e3) + " 分钟前";
+  if (diff < 86400e3) return Math.floor(diff / 3600e3) + " 小时前";
+  if (diff < 7 * 86400e3) return Math.floor(diff / 86400e3) + " 天前";
+  const d = new Date(t * 1000);
+  const pad = (n) => (n < 10 ? "0" + n : n);
+  return (d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+function samplesHtml(samples) {
+  const rows = samples.slice().sort((a, b) => (b.t || 0) - (a.t || 0));
+  return '<div class="op-tl">' + rows.map((s) =>
+    '<div class="tl-item' + (s.sub ? " tl-sub" : "") + '">' +
+    '<div class="tl-meta">' + escapeHtml(fmtTime(s.t)) +
+    " · 赞 " + (s.like || 0) + " · 回 " + (s.rcount || 0) + "</div>" +
+    '<div class="tl-text">' + escapeHtml(s.text || "") + "</div>" +
+    "</div>"
+  ).join("") + "</div>";
+}
+
 function openOpModal(postId, src) {
   const arr = src === "posts" ? (window._posts || []) : (window._upPosts || []);
   const p = arr.find((x) => x.id === postId);
@@ -980,25 +1003,29 @@ function openOpModal(postId, src) {
   let clusters = [];
   try { clusters = JSON.parse(p.comment_summary || "[]"); } catch (e) { clusters = []; }
   if (!clusters.length) return;
+  let samples = [];
+  try { samples = JSON.parse(p.comment_samples || "[]"); } catch (e) { samples = []; }
   let m = document.getElementById("op-modal");
-  if (!m) {
-    m = document.createElement("div");
-    m.id = "op-modal";
-    m.className = "sub-modal op-modal";
-    m.innerHTML =
-      '<div class="sub-modal-mask" onclick="closeOpModal()"></div>' +
-      '<div class="sub-modal-box">' +
-      '<button class="sub-modal-close" onclick="closeOpModal()">×</button>' +
-      '<div class="sub-modal-title"></div>' +
-      '<div class="sub-modal-meta"></div>' +
-      '<div class="sub-modal-body"></div>' +
-      '<div class="sub-modal-foot"><a class="btn" target="_blank" rel="noopener">去 B站 看原评论</a></div>' +
-      "</div>";
-    document.body.appendChild(m);
-  }
+  if (m) m.remove();
+  m = document.createElement("div");
+  m.id = "op-modal";
+  m.className = "sub-modal op-modal";
+  m.innerHTML =
+    '<div class="sub-modal-mask" onclick="closeOpModal()"></div>' +
+    '<div class="sub-modal-box">' +
+    '<button class="sub-modal-close" onclick="closeOpModal()">×</button>' +
+    '<div class="sub-modal-title"></div>' +
+    '<div class="sub-modal-meta"></div>' +
+    '<div class="op-tabs"><button class="op-tab active" data-tab="op">观点</button>' +
+    '<button class="op-tab" data-tab="tl">时间线</button></div>' +
+    '<div class="sub-modal-body"></div>' +
+    '<div class="sub-modal-foot"><a class="btn" target="_blank" rel="noopener">去 B站 看原评论</a></div>' +
+    "</div>";
+  document.body.appendChild(m);
   m.querySelector(".sub-modal-title").textContent = p.title || "无标题";
   m.querySelector(".sub-modal-meta").textContent = "评论区观点 · " + (p.comment_at || "");
-  m.querySelector(".sub-modal-body").innerHTML = clusters.map((c) => {
+  const body = m.querySelector(".sub-modal-body");
+  const opHtml = clusters.map((c) => {
     const quotes = (c.quotes || []).map((q) => '<div class="op-quote">“' + escapeHtml(q) + "”</div>").join("");
     return (
       '<div class="op-cluster">' +
@@ -1010,6 +1037,17 @@ function openOpModal(postId, src) {
       "</div>"
     );
   }).join("");
+  const tlHtml = samples.length
+    ? samplesHtml(samples)
+    : '<div class="empty">暂无时间线样本（等定时任务刷新回填）</div>';
+  const renderBody = (mode) => { body.innerHTML = mode === "tl" ? tlHtml : opHtml; };
+  m.querySelectorAll(".op-tab").forEach((b) => {
+    b.addEventListener("click", () => {
+      m.querySelectorAll(".op-tab").forEach((x) => x.classList.toggle("active", x === b));
+      renderBody(b.dataset.tab);
+    });
+  });
+  body.innerHTML = opHtml;
   m.classList.add("show");
   document.body.style.overflow = "hidden";
 }

@@ -230,3 +230,19 @@ button.primary { background: var(--red); border: none; color: #fff; padding: 9px
   color: var(--text); font-size: 13px; line-height: 1.55;
   margin: 4px 0 0 6px; padding-left: 8px; border-left: 2px solid var(--border);
 }
+.op-tabs {
+  display: flex; gap: 6px; padding: 0 16px 8px; border-bottom: 1px solid var(--border);
+}
+.op-tab {
+  border: none; background: none; color: var(--muted); font-size: 14px;
+  padding: 4px 10px; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.op-tab.active { color: #7c5cff; border-bottom-color: #7c5cff; font-weight: 600; }
+.op-tl { display: flex; flex-direction: column; gap: 8px; }
+.tl-item {
+  background: var(--panel); border-radius: 8px; padding: 8px 10px;
+  border-left: 3px solid transparent;
+}
+.tl-item.tl-sub { border-left-color: #b9a9ff; margin-left: 14px; }
+.tl-meta { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.tl-text { color: var(--text); font-size: 13px; line-height: 1.55; }
