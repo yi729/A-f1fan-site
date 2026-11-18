@@ -1424,6 +1424,93 @@ function renderCalRows(races, today) {
   }).join("");
 }
 
+/* ---------------- 站内搜索 ---------------- */
+function hl(text, q) {
+  let esc = escapeHtml(text || "");
+  const qe = String(q || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!qe) return esc;
+  try {
+    esc = esc.replace(new RegExp(qe, "gi"), (m) => "<mark>" + m + "</mark>");
+  } catch (e) { /* 非法正则兜底 */ }
+  return esc;
+}
+
+function truncate(text, n) {
+  text = String(text || "");
+  return text.length <= n ? text : text.slice(0, n) + "…";
+}
+
+function doSearch() {
+  const q = document.getElementById("search-input").value.trim();
+  if (!q) return;
+  const modal = document.getElementById("search-modal");
+  document.getElementById("search-modal-input").value = q;
+  modal.classList.add("show");
+  document.body.style.overflow = "hidden";
+  runSearch();
+  setTimeout(() => document.getElementById("search-modal-input").focus(), 50);
+}
+
+function runSearch() {
+  const q = document.getElementById("search-modal-input").value.trim();
+  const body = document.getElementById("search-body");
+  const meta = document.getElementById("search-meta");
+  if (!q) { body.innerHTML = ""; meta.textContent = ""; return; }
+  meta.textContent = "搜索中…";
+  api("/api/search?q=" + encodeURIComponent(q)).then((data) => {
+    const posts = data.posts || [];
+    const ups = data.upPosts || [];
+    meta.textContent = "「" + q + "」共 " + (posts.length + ups.length) +
+      " 条结果（帖子 " + posts.length + " · UP 内容 " + ups.length + "）";
+    if (!posts.length && !ups.length) {
+      body.innerHTML = '<div class="search-empty">没有找到相关内容</div>';
+      return;
+    }
+    let html = "";
+    if (posts.length) {
+      html += '<div class="search-sec-title">帖子分析</div>';
+      html += posts.map((p) =>
+        '<a class="search-item" href="' + escapeHtml(p.url || "#") + '" target="_blank" rel="noopener">' +
+        '<div class="search-item-title">' + hl(truncate(p.title, 80), q) + "</div>" +
+        (p.summary ? '<div class="search-item-sum">' + hl(truncate(p.summary, 130), q) + "</div>" : "") +
+        '<div class="search-item-meta">' + escapeHtml(p.author || "") + " · " +
+        escapeHtml(p.published_at || "") + (p.race ? " · " + escapeHtml(p.race) : "") +
+        " · " + escapeHtml(p.platform || "") + "</div></a>"
+      ).join("");
+    }
+    if (ups.length) {
+      html += '<div class="search-sec-title">UP 内容</div>';
+      html += ups.map((p) =>
+        '<a class="search-item" href="' + escapeHtml(p.url || "#") + '" target="_blank" rel="noopener">' +
+        '<div class="search-item-title">' + hl(truncate(p.title, 80), q) + "</div>" +
+        (p.summary ? '<div class="search-item-sum">' + hl(truncate(p.summary, 130), q) + "</div>" : "") +
+        '<div class="search-item-meta">' + escapeHtml(p.author || "") + " · " +
+        escapeHtml(p.published_at || "") + " · " +
+        (p.source_type === "video" ? "视频" : "专栏") + "</div></a>"
+      ).join("");
+    }
+    body.innerHTML = html;
+  }).catch((e) => {
+    meta.textContent = "搜索失败: " + e;
+    body.innerHTML = "";
+  });
+}
+
+function closeSearchModal() {
+  const m = document.getElementById("search-modal");
+  if (m) m.classList.remove("show");
+  document.body.style.overflow = "";
+}
+
+document.getElementById("btn-search").addEventListener("click", doSearch);
+document.getElementById("search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") doSearch();
+});
+document.getElementById("btn-search-go").addEventListener("click", runSearch);
+document.getElementById("search-modal-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runSearch();
+});
+
 /* 初始加载 */
 loadStandings();
 showSchedulerStatus();

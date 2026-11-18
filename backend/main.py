@@ -155,6 +155,14 @@ def api_posts():
     return db.list_posts()
 
 
+@app.get("/api/search")
+def api_search(q: str = ""):
+    q = (q or "").strip()
+    if not q:
+        return {"posts": [], "upPosts": []}
+    return {"posts": db.search_posts(q), "upPosts": db.search_up_posts(q)}
+
+
 def _require_token(token, x_scrape_token):
     if SCRAPE_TOKEN:
         supplied = token or x_scrape_token

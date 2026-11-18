@@ -17,7 +17,7 @@ body {
   line-height: 1.5;
 }
 header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 14px 20px; background: var(--panel);
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 10;
@@ -291,3 +291,41 @@ button.primary { background: var(--red); border: none; color: #fff; padding: 9px
 .cal-status.done { background: var(--panel2); color: var(--muted); }
 .cal-status.today { background: #7c5cff; color: #fff; }
 .cal-status.soon { background: #7c5cff22; color: #7c5cff; }
+
+/* ---- 站内搜索 ---- */
+.nav-search { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.nav-search input {
+  width: 170px; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 13px; background: var(--panel2); color: var(--text);
+}
+.nav-search input:focus { outline: none; border-color: #7c5cff; background: var(--panel); }
+.nav-search button {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+}
+.nav-search button:hover { border-color: #7c5cff; color: #7c5cff; }
+.search-bar { display: flex; gap: 8px; }
+.search-bar input {
+  flex: 1; padding: 9px 12px; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; background: var(--panel); color: var(--text);
+}
+.search-bar input:focus { outline: none; border-color: #7c5cff; }
+#search-body { white-space: normal; }
+.search-sec-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 700; color: var(--muted);
+  margin: 14px 0 8px;
+}
+.search-sec-title:first-child { margin-top: 2px; }
+.search-sec-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.search-item {
+  display: block; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+  text-decoration: none; color: var(--text);
+}
+.search-item:hover { border-color: #7c5cff; }
+.search-item-title { font-weight: 600; font-size: 14px; line-height: 1.5; margin-bottom: 3px; }
+.search-item-sum { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+.search-item-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+.search-item mark { background: #7c5cff33; color: #5b3fd4; padding: 0 2px; border-radius: 3px; }
+.search-empty { color: var(--muted); text-align: center; padding: 40px 0 20px; }

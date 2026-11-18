@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>F1 数据中心</title>
-<link rel="stylesheet" href="style.css?v=20261118a">
+<link rel="stylesheet" href="style.css?v=20261118b">
 </head>
 <body>
 <header>
@@ -15,6 +15,10 @@
     <button class="tab" data-tab="ups">UP 订阅</button>
     <button class="tab" data-tab="calendar">2027 赛历</button>
   </nav>
+  <div class="nav-search">
+    <input id="search-input" placeholder="搜索帖子 / UP 内容" maxlength="50">
+    <button id="btn-search">搜索</button>
+  </div>
   <div class="nav-auth">
     <span id="nav-auth-guest"><button id="btn-nav-login">登录 / 注册</button></span>
     <span id="nav-auth-user" style="display:none">
@@ -70,6 +74,19 @@
   </section>
 </main>
 
+<div id="search-modal" class="sub-modal">
+  <div class="sub-modal-mask" onclick="closeSearchModal()"></div>
+  <div class="sub-modal-box search-box">
+    <button class="sub-modal-close" onclick="closeSearchModal()">×</button>
+    <div class="search-bar">
+      <input id="search-modal-input" placeholder="搜索帖子 / UP 内容" maxlength="50">
+      <button id="btn-search-go" class="primary">搜索</button>
+    </div>
+    <div class="sub-modal-meta" id="search-meta"></div>
+    <div class="sub-modal-body" id="search-body"></div>
+  </div>
+</div>
+
 <div id="auth-modal" class="sub-modal">
   <div class="sub-modal-mask" onclick="closeAuthModal()"></div>
   <div class="sub-modal-box auth-box">
@@ -106,6 +123,6 @@
 </div>
 
 <datalist id="drivers-datalist"></datalist>
-<script src="app.js?v=20261118a"></script>
+<script src="app.js?v=20261118b"></script>
 </body>
 </html>

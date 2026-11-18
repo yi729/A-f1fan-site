@@ -179,6 +179,46 @@ def get_post(post_id):
         return dict(row) if row else None
 
 
+def _like(q):
+    return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def search_posts(q, limit=20):
+    """按关键词搜帖子：标题 > 摘要 > 正文，其余按发布时间倒序。"""
+    like = _like(q)
+    with _lock:
+        rows = _conn.execute(
+            """SELECT id, platform, title, summary, author, url, published_at, race
+               FROM posts
+               WHERE title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'
+                  OR author LIKE ? ESCAPE '\\' OR raw_text LIKE ? ESCAPE '\\'
+               ORDER BY CASE WHEN title LIKE ? ESCAPE '\\' THEN 0
+                             WHEN summary LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
+                        published_at DESC
+               LIMIT ?""",
+            (like, like, like, like, like, like, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def search_up_posts(q, limit=20):
+    """按关键词搜 UP 内容：标题 > 摘要 > 正文（AI 字幕）> 作者。"""
+    like = _like(q)
+    with _lock:
+        rows = _conn.execute(
+            """SELECT id, mid, source_type, title, summary, author, url, published_at
+               FROM up_posts
+               WHERE title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\'
+                  OR author LIKE ? ESCAPE '\\' OR subtitle_text LIKE ? ESCAPE '\\'
+               ORDER BY CASE WHEN title LIKE ? ESCAPE '\\' THEN 0
+                             WHEN summary LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,
+                        published_at DESC
+               LIMIT ?""",
+            (like, like, like, like, like, like, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def log_run(total, added, error=None):
     with _lock:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
