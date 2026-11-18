@@ -418,6 +418,17 @@ function renderCompare(data, out) {
 const SEASON_WIDE = "赛季整体";
 window._posts = [];
 
+function opStances(p) {
+  const s = new Set();
+  try {
+    const arr = JSON.parse(p.comment_summary || "[]");
+    if (Array.isArray(arr)) {
+      arr.forEach((c) => { if (c && c.stance) s.add(c.stance); });
+    }
+  } catch (e) {}
+  return s;
+}
+
 function loadPosts() {
   const el = document.getElementById("posts-list");
   el.innerHTML = '<div class="loading">加载中…</div>';
@@ -464,16 +475,22 @@ function buildPostsFilter(posts) {
     tsel.appendChild(o);
   });
   tsel.onchange = () => renderPosts();
+
+  // 立场筛选：筛选「含该立场观点簇」的帖子（无观点汇总的帖子不参与）
+  const fsel = document.getElementById("posts-stance-filter");
+  fsel.onchange = () => renderPosts();
 }
 
 function renderPosts() {
   const el = document.getElementById("posts-list");
   const race = document.getElementById("posts-race-filter").value;
   const ym = document.getElementById("posts-time-filter").value;
-  // 分站与时间双条件过滤；列表按发布时间倒序（无日期的排最后）
+  const st = document.getElementById("posts-stance-filter").value;
+  // 分站/时间/立场三条件过滤；列表按发布时间倒序（无日期的排最后）
   const posts = window._posts
     .filter((p) => (!race || (p.race || SEASON_WIDE) === race) &&
-                  (!ym || String(p.published_at || "").startsWith(ym)))
+                  (!ym || String(p.published_at || "").startsWith(ym)) &&
+                  (!st || opStances(p).has(st)))
     .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || "") ||
                     ((b.id || 0) - (a.id || 0)));
   if (!window._posts.length) {
@@ -830,14 +847,18 @@ function renderUps() {
   subsEl.innerHTML = parts.join("");
 
   const listEl = document.getElementById("ups-list");
-  if (!window._upPosts.length) {
-    listEl.innerHTML = window._me
-      ? '<div class="empty">还没有汇总内容。添加订阅后会立即开始拉取该 UP 的最新内容，稍等几分钟再刷新。</div>'
-      : '<div class="empty">公共订阅暂无汇总内容。</div>';
+  const st = document.getElementById("ups-stance-filter").value;
+  const upPosts = st ? window._upPosts.filter((p) => opStances(p).has(st)) : window._upPosts;
+  if (!upPosts.length) {
+    listEl.innerHTML = st
+      ? '<div class="empty">该立场下暂无相关内容。</div>'
+      : (window._me
+        ? '<div class="empty">还没有汇总内容。添加订阅后会立即开始拉取该 UP 的最新内容，稍等几分钟再刷新。</div>'
+        : '<div class="empty">公共订阅暂无汇总内容。</div>');
     return;
   }
   const byMid = {};
-  window._upPosts.forEach((p) => {
+  upPosts.forEach((p) => {
     (byMid[p.mid] = byMid[p.mid] || []).push(p);
   });
   const groups = [];
@@ -880,6 +901,8 @@ function renderUps() {
     );
   }).join("");
 }
+
+document.getElementById("ups-stance-filter").onchange = renderUps;
 
 window._collapsedUps = new Set(JSON.parse(localStorage.getItem("collapsedUps") || "[]"));
 
