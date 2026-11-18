@@ -246,3 +246,48 @@ button.primary { background: var(--red); border: none; color: #fff; padding: 9px
 .tl-item.tl-sub { border-left-color: #b9a9ff; margin-left: 14px; }
 .tl-meta { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
 .tl-text { color: var(--text); font-size: 13px; line-height: 1.55; }
+
+/* ---- 积分走势 ---- */
+.trend-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 4px; }
+.trend-legend-item { font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+.trend-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+.trend-chart-wrap { position: relative; }
+.trend-svg { width: 100%; height: auto; display: block; background: var(--panel); border-radius: 8px; }
+.trend-grid { stroke: var(--border); stroke-width: 1; }
+.trend-axis { fill: var(--muted); font-size: 11px; }
+.trend-line { fill: none; stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.trend-guide { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.trend-tip {
+  position: absolute; pointer-events: none; background: var(--panel2);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; min-width: 150px; z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+}
+.trend-tip-title { font-weight: 600; margin-bottom: 4px; }
+.trend-tip-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; line-height: 1.8; }
+.trend-tip-row b { margin-left: auto; padding-left: 10px; }
+
+/* ---- 2027 赛历 ---- */
+#cal-banner {
+  background: linear-gradient(135deg, #7c5cff26, #7c5cff08);
+  border: 1px solid #7c5cff55; border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 10px;
+}
+.cal-banner-title { font-size: 16px; font-weight: 700; }
+.cal-banner-date { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
+.cal-count { font-size: 26px; font-weight: 700; color: #7c5cff; font-variant-numeric: tabular-nums; }
+.cal-count i { font-style: normal; font-size: 14px; margin-right: 4px; }
+.cal-note { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+.cal-row {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--panel); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px;
+}
+.cal-row-today { border: 1px solid #7c5cff; }
+.cal-round { font-weight: 700; color: #7c5cff; width: 34px; flex: none; }
+.cal-info { flex: 1; min-width: 0; }
+.cal-name { font-weight: 600; font-size: 14px; }
+.cal-meta { color: var(--muted); font-size: 12px; }
+.cal-date { color: var(--text); font-size: 13px; flex: none; white-space: nowrap; }
+.cal-status { flex: none; font-size: 12px; padding: 2px 10px; border-radius: 999px; }
+.cal-status.done { background: var(--panel2); color: var(--muted); }
+.cal-status.today { background: #7c5cff; color: #fff; }
+.cal-status.soon { background: #7c5cff22; color: #7c5cff; }

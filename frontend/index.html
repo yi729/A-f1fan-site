@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>F1 数据中心</title>
-<link rel="stylesheet" href="style.css?v=20261117h">
+<link rel="stylesheet" href="style.css?v=20261118a">
 </head>
 <body>
 <header>
@@ -13,6 +13,7 @@
     <button class="tab active" data-tab="races">赛事数据</button>
     <button class="tab" data-tab="posts">帖子分析</button>
     <button class="tab" data-tab="ups">UP 订阅</button>
+    <button class="tab" data-tab="calendar">2027 赛历</button>
   </nav>
   <div class="nav-auth">
     <span id="nav-auth-guest"><button id="btn-nav-login">登录 / 注册</button></span>
@@ -29,10 +30,12 @@
     <div class="subnav">
       <button class="subtab active" data-sub="standings">积分榜</button>
       <button class="subtab" data-sub="results">每站结果</button>
+      <button class="subtab" data-sub="trend">积分走势</button>
       <button class="subtab" data-sub="compare">车手对比</button>
     </div>
     <div id="sub-standings" class="sub-panel active"></div>
     <div id="sub-results" class="sub-panel"></div>
+    <div id="sub-trend" class="sub-panel"></div>
     <div id="sub-compare" class="sub-panel"></div>
   </section>
 
@@ -60,6 +63,10 @@
     <div id="ups-subs"></div>
     <h3 class="ups-feed-title">内容汇总（每 2 小时自动更新）</h3>
     <div id="ups-list"></div>
+  </section>
+
+  <section id="tab-calendar" class="tab-panel">
+    <div id="calendar-list"></div>
   </section>
 </main>
 
@@ -99,6 +106,6 @@
 </div>
 
 <datalist id="drivers-datalist"></datalist>
-<script src="app.js?v=20261117e"></script>
+<script src="app.js?v=20261118a"></script>
 </body>
 </html>

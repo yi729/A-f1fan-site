@@ -136,6 +136,16 @@ def api_compare(d1: str, d2: str):
     return f1.compare_drivers(d1, d2)
 
 
+@app.get("/api/f1/trend")
+def api_trend(season: int):
+    return f1.get_points_trend(season)
+
+
+@app.get("/api/f1/calendar/{year}")
+def api_calendar(year: int):
+    return f1.get_calendar(year)
+
+
 # ---------------- 帖子接口 ----------------
 @app.get("/api/posts")
 def api_posts():

@@ -62,6 +62,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "posts") loadPosts();
     if (btn.dataset.tab === "ups") loadUps();
+    if (btn.dataset.tab === "calendar") loadCalendar();
   });
 });
 
@@ -73,6 +74,7 @@ document.querySelectorAll(".subtab").forEach((btn) => {
     document.getElementById("sub-" + btn.dataset.sub).classList.add("active");
     if (btn.dataset.sub === "standings") loadStandings();
     if (btn.dataset.sub === "results") loadResults();
+    if (btn.dataset.sub === "trend") loadTrend();
     if (btn.dataset.sub === "compare") loadDrivers();
   });
 });
@@ -1190,6 +1192,237 @@ document.getElementById("btn-ups-check").addEventListener("click", async () => {
     upsStatus("检查失败: " + e);
   }
 });
+
+/* ---------------- 积分走势 ---------------- */
+window._trendCache = {};
+let trendType = "drivers";
+let trendTop = 6;
+
+function loadTrend() {
+  const el = document.getElementById("sub-trend");
+  if (el.dataset.ready === "1") return;
+  el.innerHTML = '<div class="loading">加载中…</div>';
+  api("/api/f1/seasons").then((seasons) => {
+    const list = seasons.filter((y) => y >= 1950).sort((a, b) => b - a);
+    const latest = list[0];
+    el.innerHTML =
+      '<div class="filters">' +
+      '<label>赛季 <select id="trend-season"></select></label>' +
+      '<label>类型 <select id="trend-type"><option value="drivers">车手</option><option value="constructors">车队</option></select></label>' +
+      '<label>显示 <select id="trend-top"><option value="6">前 6</option><option value="3">前 3</option><option value="10">前 10</option><option value="0">全部</option></select></label>' +
+      "</div>" +
+      '<div id="trend-legend"></div>' +
+      '<div id="trend-chart"></div>';
+    const s = document.getElementById("trend-season");
+    list.forEach((y) => {
+      const o = document.createElement("option"); o.value = y; o.textContent = y; s.appendChild(o);
+    });
+    s.value = latest;
+    s.addEventListener("change", fetchTrend);
+    document.getElementById("trend-type").addEventListener("change", (e) => {
+      trendType = e.target.value;
+      renderTrend();
+    });
+    document.getElementById("trend-top").addEventListener("change", (e) => {
+      trendTop = parseInt(e.target.value, 10);
+      renderTrend();
+    });
+    el.dataset.ready = "1";
+    fetchTrend();
+  }).catch((e) => { el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(e) + "</div>"; });
+}
+
+function fetchTrend() {
+  const el = document.getElementById("trend-chart");
+  const season = document.getElementById("trend-season").value;
+  const key = "trend|" + season;
+  if (window._trendCache[key]) { renderTrend(); return; }
+  document.getElementById("trend-legend").innerHTML = "";
+  el.innerHTML = '<div class="loading">加载中…（首次加载该赛季需逐站汇总，约 30 秒）</div>';
+  api("/api/f1/trend?season=" + season).then((data) => {
+    window._trendCache[key] = data;
+    renderTrend();
+  }).catch((e) => { el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(e) + "</div>"; });
+}
+
+function trendSeries() {
+  const season = document.getElementById("trend-season").value;
+  const data = window._trendCache["trend|" + season] ||
+    { rounds: [], drivers: [], constructors: [] };
+  const all = trendType === "drivers" ? data.drivers : data.constructors;
+  const arr = trendTop > 0 ? all.slice(0, trendTop) : all;
+  return { data, arr };
+}
+
+function niceMax(v) {
+  if (v <= 0) return 10;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow;
+}
+
+function renderTrend() {
+  const { data, arr } = trendSeries();
+  const chartEl = document.getElementById("trend-chart");
+  const legendEl = document.getElementById("trend-legend");
+  if (!data.rounds.length || !arr.length) {
+    legendEl.innerHTML = "";
+    chartEl.innerHTML = '<div class="empty">该赛季暂无走势数据（可能尚未开赛）</div>';
+    return;
+  }
+  legendEl.innerHTML = arr.map((s) =>
+    '<span class="trend-legend-item"><span class="trend-dot" style="background:' +
+    escapeHtml(s.color) + '"></span>' + escapeHtml(s.name) +
+    ' <span class="muted">' + s.points[s.points.length - 1] + "</span></span>").join("");
+
+  const W = 900, H = 400, L = 50, R = 12, T = 12, B = 28;
+  const n = data.rounds.length;
+  const maxPts = Math.max(...arr.map((s) => Math.max(...s.points)));
+  const yMax = niceMax(maxPts);
+  const x = (i) => (n === 1 ? (L + W - R) / 2 : L + ((W - L - R) * i) / (n - 1));
+  const y = (p) => T + (H - T - B) * (1 - p / yMax);
+
+  let g = "";
+  for (let k = 0; k <= 5; k++) {
+    const p = (yMax * k) / 5;
+    const yy = y(p);
+    g += '<line x1="' + L + '" y1="' + yy + '" x2="' + (W - R) + '" y2="' + yy + '" class="trend-grid"/>' +
+      '<text x="' + (L - 6) + '" y="' + (yy + 4) + '" class="trend-axis" text-anchor="end">' +
+      Math.round(p) + "</text>";
+  }
+  const stepX = Math.max(1, Math.ceil(n / 12));
+  data.rounds.forEach((r, i) => {
+    if (i % stepX !== 0 && i !== n - 1) return;
+    g += '<text x="' + x(i) + '" y="' + (H - 8) + '" class="trend-axis" text-anchor="middle">R' +
+      r.round + "</text>";
+  });
+  const paths = arr.map((s) => {
+    const pts = s.points.map((p, i) => x(i).toFixed(1) + "," + y(p).toFixed(1)).join(" ");
+    return '<polyline points="' + pts + '" class="trend-line" style="stroke:' +
+      escapeHtml(s.color) + '"/>';
+  }).join("");
+
+  chartEl.innerHTML =
+    '<div class="trend-chart-wrap">' +
+    '<svg viewBox="0 0 ' + W + " " + H + '" class="trend-svg" preserveAspectRatio="xMidYMid meet">' +
+    g + paths +
+    '<g id="trend-hover"></g>' +
+    '<rect x="' + L + '" y="' + T + '" width="' + (W - L - R) + '" height="' + (H - T - B) +
+    '" fill="transparent" id="trend-hover-area"></rect>' +
+    "</svg>" +
+    '<div class="trend-tip" id="trend-tip" style="display:none"></div>' +
+    "</div>";
+
+  window._trendData = { arr, data, x, y };
+  const area = document.getElementById("trend-hover-area");
+  const svg = chartEl.querySelector("svg");
+  area.addEventListener("mousemove", (ev) => trendHover(ev, svg));
+  area.addEventListener("click", (ev) => trendHover(ev, svg));
+  area.addEventListener("mouseleave", () => {
+    document.getElementById("trend-hover").innerHTML = "";
+    document.getElementById("trend-tip").style.display = "none";
+  });
+}
+
+function trendHover(ev, svg) {
+  const { arr, data, x, y } = window._trendData || {};
+  if (!arr) return;
+  const rect = svg.getBoundingClientRect();
+  const px = ((ev.clientX - rect.left) / rect.width) * 900;
+  const n = data.rounds.length;
+  const i = n === 1 ? 0 : Math.max(0, Math.min(n - 1,
+    Math.round((px - 50) / ((900 - 50 - 12) / (n - 1)))));
+  const g = document.getElementById("trend-hover");
+  const tip = document.getElementById("trend-tip");
+  const vals = arr.map((s) => ({ s, v: s.points[i] })).sort((a, b) => b.v - a.v);
+  const hx = x(i);
+  g.innerHTML = '<line x1="' + hx.toFixed(1) + '" y1="12" x2="' + hx.toFixed(1) +
+    '" y2="372" class="trend-guide"/>' +
+    vals.map((o) => '<circle cx="' + hx.toFixed(1) + '" cy="' + y(o.v).toFixed(1) +
+      '" r="3.5" style="fill:' + escapeHtml(o.s.color) + ';stroke:#fff;stroke-width:1"/>').join("");
+  const r = data.rounds[i];
+  tip.innerHTML = '<div class="trend-tip-title">R' + r.round + " · " + escapeHtml(r.raceName) + "</div>" +
+    vals.map((o) => '<div class="trend-tip-row"><span><span class="trend-dot" style="background:' +
+      escapeHtml(o.s.color) + '"></span>' + escapeHtml(o.s.name) + "</span><b>" + o.v + "</b></div>").join("");
+  tip.style.display = "block";
+  const wrap = tip.parentElement.getBoundingClientRect();
+  let left = ev.clientX - wrap.left + 14;
+  if (left + 180 > wrap.width) left = ev.clientX - wrap.left - 194;
+  let top = ev.clientY - wrap.top + 12;
+  if (top + 130 > wrap.height) top = wrap.height - 140;
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+
+/* ---------------- 2027 赛历 ---------------- */
+let _calTimer = null;
+
+function loadCalendar() {
+  const el = document.getElementById("calendar-list");
+  if (el.dataset.ready === "1") return;
+  el.innerHTML = '<div class="loading">加载中…</div>';
+  api("/api/f1/calendar/2027").then((data) => {
+    window._cal = data;
+    el.innerHTML = '<div id="cal-banner"></div><div class="cal-note" id="cal-note"></div><div id="cal-rows"></div>';
+    if (data.note) document.getElementById("cal-note").textContent = data.note;
+    el.dataset.ready = "1";
+    tickCalendar();
+    if (!_calTimer) _calTimer = setInterval(tickCalendar, 1000);
+  }).catch((e) => { el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(e) + "</div>"; });
+}
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function tickCalendar() {
+  const el = document.getElementById("calendar-list");
+  if (!el || !window._cal) return;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const races = window._cal.races || [];
+  const next = races.find((r) => new Date(r.date + "T00:00:00") >= today);
+  const banner = document.getElementById("cal-banner");
+  if (next) {
+    const target = new Date(next.date + "T00:00:00");
+    const diff = Math.max(0, target - now);
+    const d = Math.floor(diff / 86400000);
+    const h = Math.floor((diff % 86400000) / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    banner.innerHTML =
+      '<div class="cal-banner-title">下一站 · R' + next.round + " " + escapeHtml(next.raceName) + "</div>" +
+      '<div class="cal-banner-date">' + next.date + " · " + escapeHtml(next.circuit) +
+      " · " + escapeHtml(next.country) + "</div>" +
+      '<div class="cal-count">' + d + "<i>天</i> " + pad2(h) + ":" + pad2(m) + ":" + pad2(s) + "</div>";
+  } else {
+    banner.innerHTML = '<div class="cal-banner-title">2027 赛季已结束</div>';
+  }
+  renderCalRows(races, today);
+}
+
+function renderCalRows(races, today) {
+  const el = document.getElementById("cal-rows");
+  if (!el) return;
+  const dows = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+  el.innerHTML = races.map((r) => {
+    const d = new Date(r.date + "T00:00:00");
+    let status;
+    let rowCls = "";
+    if (d < today) {
+      status = '<span class="cal-status done">已结束</span>';
+    } else if (d.getTime() === today.getTime()) {
+      status = '<span class="cal-status today">今天正赛</span>';
+      rowCls = " cal-row-today";
+    } else {
+      status = '<span class="cal-status soon">还有 ' + Math.round((d - today) / 86400000) + " 天</span>";
+    }
+    return '<div class="cal-row' + rowCls + '">' +
+      '<span class="cal-round">R' + r.round + "</span>" +
+      '<div class="cal-info"><div class="cal-name">' + escapeHtml(r.raceName) + "</div>" +
+      '<div class="cal-meta">' + escapeHtml(r.circuit) + " · " + escapeHtml(r.country) + "</div></div>" +
+      '<div class="cal-date">' + r.date + ' <span class="muted">' + dows[d.getDay()] + "</span></div>" +
+      status + "</div>";
+  }).join("");
+}
 
 /* 初始加载 */
 loadStandings();

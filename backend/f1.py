@@ -1,12 +1,16 @@
 """F1 数据（Jolpica / Ergast 维护分支）抓取与聚合。"""
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from pathlib import Path
 
 import requests
 
 import images
 
 BASE = "https://api.jolpi.ca/ergast/f1"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # 简单内存缓存：key -> (过期时间戳, 数据)
 _cache = {}
@@ -38,7 +42,9 @@ def _get(path, params=None, ttl=300):
         try:
             resp = requests.get(url, params=params, timeout=30)
             if resp.status_code == 429:
-                time.sleep(1.5 * (attempt + 1))
+                last_exc = requests.exceptions.RequestException(
+                    "429 rate limited: " + url)
+                time.sleep(5.0 * (attempt + 1))
                 continue
             resp.raise_for_status()
             data = resp.json()
@@ -238,6 +244,193 @@ def get_season_races(season):
             "date": r["date"],
         })
     return out
+
+
+def _round_standings(season, round_no, kind):
+    """单站积分榜（kind: driver/constructor）；未开赛/取消的分站返回 None。"""
+    data = _get(
+        f"/{season}/{round_no}/{kind}Standings.json", {"limit": "100"}, ttl=86400)
+    lists = data["MRData"]["StandingsTable"]["StandingsLists"]
+    if not lists or not lists[0].get(
+            "DriverStandings" if kind == "driver" else "ConstructorStandings"):
+        return None
+    return lists[0]
+
+
+def _trend_cache_path(season):
+    return DATA_DIR / f"trend_{season}.json"
+
+
+def get_points_trend(season):
+    """逐站累计积分走势（车手 + 车队）。
+
+    按分站取官方积分榜（含冲刺赛积分；results 接口不含冲刺行，
+    自行累加会少算），已结束的分站从 R1 起连续，遇到首个无数据
+    的分站即停止。车队积分直接用官方车队积分榜（车手季中转队时
+    积分归属原车队，按车手当前车队聚合会错）。
+
+    结果落盘缓存：已结束赛季永久缓存，进行中赛季 24h（避免每次
+    服务重启后为 40+ 个请求打 Jolpica）。
+    """
+    try:
+        season = int(season)
+    except (TypeError, ValueError):
+        return {"season": 0, "rounds": [], "drivers": [], "constructors": []}
+    races = get_season_races(season)
+    if not races:
+        return {"season": season, "rounds": [], "drivers": [], "constructors": []}
+    path = _trend_cache_path(season)
+    cached = None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("season") == season:
+            cached = raw
+    except Exception:
+        cached = None
+    today = date.today().isoformat()
+    finished = all((r["date"] or "") < today for r in races)
+    if cached and (finished or time.time() - cached.get("fetched_at", 0) < 86400):
+        return {
+            "season": cached["season"],
+            "rounds": cached["rounds"],
+            "drivers": cached["drivers"],
+            "constructors": cached["constructors"],
+        }
+    try:
+        out = _build_trend(season, races)
+    except Exception:
+        if cached:  # 网络失败时用旧缓存兜底
+            return {
+                "season": cached["season"],
+                "rounds": cached["rounds"],
+                "drivers": cached["drivers"],
+                "constructors": cached["constructors"],
+            }
+        raise
+    out["fetched_at"] = time.time()
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    return {
+        "season": out["season"],
+        "rounds": out["rounds"],
+        "drivers": out["drivers"],
+        "constructors": out["constructors"],
+    }
+
+
+def _build_trend(season, races):
+    rounds_data = {}  # round -> {"drivers": [...], "constructors": [...]}
+    for start in range(1, len(races) + 1, 4):
+        batch = list(range(start, min(start + 4, len(races) + 1)))
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            got = list(ex.map(
+                lambda r: (_round_standings(season, r, "driver"),
+                           _round_standings(season, r, "constructor")),
+                batch))
+        stop = False
+        for r, (ds, cs) in zip(batch, got):
+            if ds is None or cs is None:
+                stop = True
+                break
+            rounds_data[r] = {"drivers": ds, "constructors": cs}
+        if stop:
+            break
+    if not rounds_data:
+        return {"season": season, "rounds": [], "drivers": [], "constructors": []}
+    rounds = [r for r in races if int(r["round"]) in rounds_data]
+    drivers = {}
+    constructors = {}
+    for r in sorted(rounds_data):
+        ds = rounds_data[r]["drivers"]["DriverStandings"]
+        for s in ds:
+            d = s["Driver"]
+            c = (s.get("Constructors") or [{}])[0]
+            cid = c.get("constructorId", "")
+            _, color = images.logo_for(cid, season)
+            dd = drivers.setdefault(d["driverId"], {
+                "driverId": d["driverId"],
+                "code": d.get("code", ""),
+                "name": f'{d.get("givenName", "")} {d.get("familyName", "")}',
+                "points": [],
+            })
+            dd["points"].append(float(s["points"]))
+            dd["color"] = color  # 最后一场的车队色
+        cs = rounds_data[r]["constructors"]["ConstructorStandings"]
+        for s in cs:
+            c = s["Constructor"]
+            cid = c["constructorId"]
+            _, color = images.logo_for(cid, season)
+            cc = constructors.setdefault(cid, {
+                "constructorId": cid,
+                "name": c["name"],
+                "points": [],
+            })
+            cc["points"].append(float(s["points"]))
+            cc["color"] = color
+    def _sort(series):
+        items = sorted(series.values(), key=lambda x: x["points"][-1], reverse=True)
+        return items
+    return {
+        "season": season,
+        "rounds": [{
+            "round": r["round"],
+            "raceName": r["raceName"],
+            "date": r["date"],
+        } for r in rounds],
+        "drivers": _sort(drivers),
+        "constructors": _sort(constructors),
+    }
+
+
+# 2027 赛历（FIA 2026-09-16 公布版，正赛日为周日；Jolpica 收录后自动切换）
+CALENDAR_2027 = [
+    {"round": 1, "raceName": "巴林大奖赛", "circuit": "巴林国际赛车场", "country": "巴林", "date": "2027-03-14"},
+    {"round": 2, "raceName": "沙特阿拉伯大奖赛", "circuit": "吉达滨海赛道", "country": "沙特阿拉伯", "date": "2027-03-21"},
+    {"round": 3, "raceName": "澳大利亚大奖赛", "circuit": "阿尔伯特公园赛道", "country": "澳大利亚", "date": "2027-04-04"},
+    {"round": 4, "raceName": "日本大奖赛", "circuit": "铃鹿赛道", "country": "日本", "date": "2027-04-11"},
+    {"round": 5, "raceName": "中国大奖赛", "circuit": "上海国际赛车场", "country": "中国", "date": "2027-04-18"},
+    {"round": 6, "raceName": "迈阿密大奖赛", "circuit": "迈阿密国际赛道", "country": "美国", "date": "2027-05-02"},
+    {"round": 7, "raceName": "加拿大大奖赛", "circuit": "吉尔斯·维伦纽夫赛道", "country": "加拿大", "date": "2027-05-23"},
+    {"round": 8, "raceName": "摩纳哥大奖赛", "circuit": "蒙特卡洛街道赛道", "country": "摩纳哥", "date": "2027-06-06"},
+    {"round": 9, "raceName": "葡萄牙大奖赛", "circuit": "阿尔加维国际赛道", "country": "葡萄牙", "date": "2027-06-20"},
+    {"round": 10, "raceName": "英国大奖赛", "circuit": "银石赛道", "country": "英国", "date": "2027-07-04"},
+    {"round": 11, "raceName": "奥地利大奖赛", "circuit": "红牛环", "country": "奥地利", "date": "2027-07-11"},
+    {"round": 12, "raceName": "比利时大奖赛", "circuit": "斯帕-弗朗科尔尚赛道", "country": "比利时", "date": "2027-07-25"},
+    {"round": 13, "raceName": "匈牙利大奖赛", "circuit": "亨格罗林赛道", "country": "匈牙利", "date": "2027-08-01"},
+    {"round": 14, "raceName": "意大利大奖赛", "circuit": "蒙扎赛道", "country": "意大利", "date": "2027-09-05"},
+    {"round": 15, "raceName": "西班牙大奖赛", "circuit": "加泰罗尼亚赛道", "country": "西班牙", "date": "2027-09-12"},
+    {"round": 16, "raceName": "阿塞拜疆大奖赛", "circuit": "巴库城市赛道", "country": "阿塞拜疆", "date": "2027-09-26"},
+    {"round": 17, "raceName": "土耳其大奖赛", "circuit": "伊斯坦布尔公园赛道", "country": "土耳其", "date": "2027-10-03"},
+    {"round": 18, "raceName": "新加坡大奖赛", "circuit": "滨海湾街道赛道", "country": "新加坡", "date": "2027-10-10"},
+    {"round": 19, "raceName": "美国大奖赛", "circuit": "美洲赛道", "country": "美国", "date": "2027-10-24"},
+    {"round": 20, "raceName": "墨西哥城大奖赛", "circuit": "罗德里格斯兄弟赛道", "country": "墨西哥", "date": "2027-10-31"},
+    {"round": 21, "raceName": "圣保罗大奖赛", "circuit": "因特拉戈斯赛道", "country": "巴西", "date": "2027-11-07"},
+    {"round": 22, "raceName": "拉斯维加斯大奖赛", "circuit": "拉斯维加斯街道赛道", "country": "美国", "date": "2027-11-21"},
+    {"round": 23, "raceName": "卡塔尔大奖赛", "circuit": "卢赛尔国际赛道", "country": "卡塔尔", "date": "2027-12-05"},
+    {"round": 24, "raceName": "阿布扎比大奖赛", "circuit": "亚斯码头赛道", "country": "阿联酋", "date": "2027-12-12"},
+]
+
+
+def get_calendar(year):
+    """赛历：优先 Jolpica（已收录时），2027 未收录用静态官方版。"""
+    try:
+        year = int(year)
+    except (TypeError, ValueError):
+        year = 0
+    races = get_season_races(year)
+    if races:
+        return {"year": year, "source": "jolpica", "note": "", "races": races}
+    if year == 2027:
+        return {
+            "year": year,
+            "source": "static",
+            "note": "FIA 官方 2026-09-16 公布版，仍可能微调；季前测试 2 月 24-27 日（巴林）。",
+            "races": CALENDAR_2027,
+        }
+    return {"year": year, "source": "jolpica", "note": "", "races": []}
 
 
 def get_race_results(season, round_no):
