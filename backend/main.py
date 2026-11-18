@@ -138,7 +138,10 @@ def api_compare(d1: str, d2: str):
 
 @app.get("/api/f1/trend")
 def api_trend(season: int):
-    return f1.get_points_trend(season)
+    try:
+        return f1.get_points_trend(season)
+    except Exception:
+        raise HTTPException(status_code=503, detail="上游数据源繁忙或限流，请稍后重试")
 
 
 @app.get("/api/f1/calendar/{year}")

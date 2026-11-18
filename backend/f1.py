@@ -1,5 +1,6 @@
 """F1 数据（Jolpica / Ergast 维护分支）抓取与聚合。"""
 import json
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
@@ -261,6 +262,20 @@ def _trend_cache_path(season):
     return DATA_DIR / f"trend_{season}.json"
 
 
+_trend_locks = {}
+_trend_locks_guard = threading.Lock()
+
+
+def _read_trend_cache(season, path):
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if raw.get("season") == season:
+            return raw
+    except Exception:
+        return None
+    return None
+
+
 def get_points_trend(season):
     """逐站累计积分走势（车手 + 车队）。
 
@@ -270,7 +285,8 @@ def get_points_trend(season):
     积分归属原车队，按车手当前车队聚合会错）。
 
     结果落盘缓存：已结束赛季永久缓存，进行中赛季 24h（避免每次
-    服务重启后为 40+ 个请求打 Jolpica）。
+    服务重启后为 40+ 个请求打 Jolpica）。同赛季并发请求共享一把
+    锁，只构建一次（构建约 30s，避免多请求同时打爆上游限流）。
     """
     try:
         season = int(season)
@@ -280,13 +296,7 @@ def get_points_trend(season):
     if not races:
         return {"season": season, "rounds": [], "drivers": [], "constructors": []}
     path = _trend_cache_path(season)
-    cached = None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if raw.get("season") == season:
-            cached = raw
-    except Exception:
-        cached = None
+    cached = _read_trend_cache(season, path)
     today = date.today().isoformat()
     finished = all((r["date"] or "") < today for r in races)
     if cached and (finished or time.time() - cached.get("fetched_at", 0) < 86400):
@@ -296,23 +306,34 @@ def get_points_trend(season):
             "drivers": cached["drivers"],
             "constructors": cached["constructors"],
         }
-    try:
-        out = _build_trend(season, races)
-    except Exception:
-        if cached:  # 网络失败时用旧缓存兜底
+    with _trend_locks_guard:
+        lock = _trend_locks.setdefault(season, threading.Lock())
+    with lock:
+        cached = _read_trend_cache(season, path)  # 双检：等待期间可能已由他人建成
+        if cached and (finished or time.time() - cached.get("fetched_at", 0) < 86400):
             return {
                 "season": cached["season"],
                 "rounds": cached["rounds"],
                 "drivers": cached["drivers"],
                 "constructors": cached["constructors"],
             }
-        raise
-    out["fetched_at"] = time.time()
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+        try:
+            out = _build_trend(season, races)
+        except Exception:
+            if cached:  # 网络失败时用旧缓存兜底
+                return {
+                    "season": cached["season"],
+                    "rounds": cached["rounds"],
+                    "drivers": cached["drivers"],
+                    "constructors": cached["constructors"],
+                }
+            raise
+        out["fetched_at"] = time.time()
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
     return {
         "season": out["season"],
         "rounds": out["rounds"],
