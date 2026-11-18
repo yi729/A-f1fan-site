@@ -63,6 +63,7 @@ document.querySelectorAll(".tab").forEach((btn) => {
     if (btn.dataset.tab === "posts") loadPosts();
     if (btn.dataset.tab === "ups") loadUps();
     if (btn.dataset.tab === "calendar") loadCalendar();
+    if (btn.dataset.tab === "favs") loadFavs();
   });
 });
 
@@ -507,7 +508,8 @@ function renderPosts() {
       '<div class="post-top"><span class="platform">B站</span>' +
       '<span class="race">' + escapeHtml(p.race || SEASON_WIDE) + "</span>" +
       '<span class="cat">' + escapeHtml(p.category || "") + "</span>" +
-      (hasOp ? '<span class="op-badge">观点</span>' : "") + "</div>" +
+      (hasOp ? '<span class="op-badge">观点</span>' : "") +
+      favBtn("post", p.id) + "</div>" +
       '<a class="post-title" href="' + (hasOp ? "javascript:void(0)" : escapeHtml(p.url || "#")) + '"' +
       (hasOp ? "" : ' target="_blank" rel="noopener"') + ">" +
       escapeHtml(p.title || "无标题") + "</a>" +
@@ -618,6 +620,116 @@ function renderNavAuth() {
   }
 }
 
+/* ---------------- 我的收藏 ---------------- */
+window._favs = { post: [], up: [] };
+
+async function loadFavIds() {
+  if (!window._me) {
+    window._favs = { post: [], up: [] };
+    return;
+  }
+  try {
+    const ids = await apiAuth("/api/favs/ids");
+    window._favs = { post: ids.post || [], up: ids.up || [] };
+  } catch (e) {
+    window._favs = { post: [], up: [] };
+  }
+}
+
+function isFav(type, id) {
+  const key = type === "post" ? "post" : "up";
+  return (window._favs[key] || []).includes(id);
+}
+
+function favBtn(type, id) {
+  return '<button class="fav-btn' + (isFav(type, id) ? " on" : "") +
+    '" title="' + (isFav(type, id) ? "取消收藏" : "收藏") +
+    '" onclick="toggleFav(event, \'' + type + "', " + id + ')">' +
+    (isFav(type, id) ? "♥" : "♡") + "</button>";
+}
+
+async function toggleFav(ev, type, id) {
+  ev.stopPropagation();
+  ev.preventDefault();
+  if (!window._me) {
+    openAuthModal("login");
+    authError("登录后才能使用收藏功能");
+    return;
+  }
+  const key = type === "post" ? "post" : "up";
+  const has = isFav(type, id);
+  try {
+    await apiAuth("/api/favs/" + type + "/" + id, { method: has ? "DELETE" : "POST" });
+    window._favs[key] = has
+      ? window._favs[key].filter((x) => x !== id)
+      : window._favs[key].concat([id]);
+    rerenderFavState();
+  } catch (e) {
+    upsStatus("收藏操作失败: " + e);
+  }
+}
+
+function rerenderFavState() {
+  const activeTab = document.querySelector(".tab.active");
+  if (!activeTab) return;
+  const t = activeTab.dataset.tab;
+  if (t === "posts" && window._posts) renderPosts();
+  if (t === "ups" && window._upPosts) renderUps();
+  if (t === "favs") loadFavs();
+}
+
+function favsStatus(text) {
+  const el = document.getElementById("favs-status");
+  if (el) el.textContent = text;
+}
+
+async function loadFavs() {
+  const el = document.getElementById("favs-list");
+  const btn = document.getElementById("btn-favs-refresh");
+  if (!window._me) {
+    el.innerHTML =
+      '<div class="empty">登录后才能收藏帖子与 UP 内容。<br><br>' +
+      '<button class="primary" onclick="openAuthModal(\'login\')">立即登录 / 注册</button></div>';
+    favsStatus("");
+    if (btn) btn.style.display = "none";
+    return;
+  }
+  if (btn) btn.style.display = "";
+  el.innerHTML = '<div class="loading">加载中…</div>';
+  try {
+    const data = await apiAuth("/api/favs");
+    renderFavs(data.items || []);
+  } catch (e) {
+    el.innerHTML = '<div class="error">加载失败: ' + escapeHtml(e) + "</div>";
+  }
+}
+
+function renderFavs(items) {
+  const el = document.getElementById("favs-list");
+  favsStatus("共 " + items.length + " 条收藏");
+  if (!items.length) {
+    el.innerHTML =
+      '<div class="empty">还没有收藏。在「帖子分析」或「UP 订阅」页点卡片右上角的 ♡ 即可收藏。</div>';
+    return;
+  }
+  el.innerHTML = items.map((p) => {
+    const type = p.item_type;
+    const label = type === "post" ? "B站" : (p.source_type === "video" ? "视频" : "专栏");
+    return (
+      '<article class="post-card">' +
+      '<div class="post-top"><span class="platform">' + label + "</span>" +
+      (p.race ? '<span class="race">' + escapeHtml(p.race) + "</span>" : "") +
+      '<button class="fav-btn on" title="取消收藏" onclick="toggleFav(event, \'' + type + "', " + p.id + ')">♥</button></div>' +
+      '<a class="post-title" href="' + escapeHtml(p.url || "#") + '" target="_blank" rel="noopener">' +
+      escapeHtml(p.title || "无标题") + "</a>" +
+      '<div class="post-author">' + escapeHtml(p.author || "") + " · " + escapeHtml(p.published_at || "") +
+      " · 收藏于 " + escapeHtml(p.fav_at || "") + "</div>" +
+      '<div class="post-summary">' + escapeHtml(p.summary || "") + "</div>" +
+      "</article>"
+    );
+  }).join("");
+}
+
 let _authTab = "login";
 
 function switchAuthTab(tab) {
@@ -671,6 +783,7 @@ async function authSubmit() {
     renderNavAuth();
     upsStatus((_authTab === "login" ? "登录成功" : "注册成功，已自动登录") + "：" + data.nickname);
     loadUps();
+    loadFavIds().then(rerenderFavState);
   } catch (e) {
     authError(String(e));
   }
@@ -724,6 +837,8 @@ async function deleteAccount() {
   renderNavAuth();
   upsStatus("账号已注销");
   loadUps();
+  window._favs = { post: [], up: [] };
+  if (document.querySelector(".tab.active") && document.querySelector(".tab.active").dataset.tab === "favs") loadFavs();
 }
 
 async function doLogout() {
@@ -733,6 +848,8 @@ async function doLogout() {
   renderNavAuth();
   upsStatus("已退出登录");
   loadUps();
+  window._favs = { post: [], up: [] };
+  if (document.querySelector(".tab.active") && document.querySelector(".tab.active").dataset.tab === "favs") loadFavs();
 }
 
 async function initAuth() {
@@ -744,6 +861,7 @@ async function initAuth() {
     window._me = null;
   }
   renderNavAuth();
+  loadFavIds();
 }
 
 async function upsAuthed(path, opts) {
@@ -955,7 +1073,8 @@ function upPostCard(p) {
       ? '<img class="up-cover" src="' + escapeHtml(p.cover) + '" loading="lazy" alt="" onerror="this.remove()">'
       : "") +
     '<div class="post-top"><span class="platform">' + (p.source_type === "video" ? "视频" : "专栏") + "</span>" +
-    '<span class="race">' + escapeHtml(p.summary_type || "—") + "</span>" + opBadge + "</div>" +
+    '<span class="race">' + escapeHtml(p.summary_type || "—") + "</span>" + opBadge +
+    favBtn("up", p.id) + "</div>" +
     '<a class="post-title" href="' + (hasSub || hasOp ? "javascript:void(0)" : escapeHtml(p.url || "#")) + '"' +
     (hasSub || hasOp ? "" : ' target="_blank" rel="noopener"') + ">" +
     escapeHtml(p.title || "无标题") + "</a>" +
@@ -1173,6 +1292,7 @@ document.getElementById("auth-tab-register").addEventListener("click", () => swi
 document.getElementById("btn-acct-pw").addEventListener("click", changePassword);
 document.getElementById("btn-acct-delete").addEventListener("click", deleteAccount);
 document.getElementById("btn-ups-add").addEventListener("click", addUp);
+document.getElementById("btn-favs-refresh").addEventListener("click", loadFavs);
 document.getElementById("btn-ups-check").addEventListener("click", async () => {
   upsStatus("提交检查任务…");
   try {

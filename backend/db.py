@@ -122,6 +122,18 @@ def init(db_path):
         _conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_subs_user_mid ON user_subs(user_id, mid)"
         )
+        _conn.execute(
+            """CREATE TABLE IF NOT EXISTS user_favs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                item_type TEXT,
+                item_id INTEGER,
+                created_at TEXT
+            )"""
+        )
+        _conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_favs ON user_favs(user_id, item_type, item_id)"
+        )
         _conn.commit()
 
 
@@ -413,6 +425,7 @@ def delete_user(user_id):
     """注销：删除账号、其全部会话与个人订阅（汇总内容保留）。"""
     with _lock:
         _conn.execute("DELETE FROM user_subs WHERE user_id=?", (user_id,))
+        _conn.execute("DELETE FROM user_favs WHERE user_id=?", (user_id,))
         _conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
         _conn.execute("DELETE FROM users WHERE id=?", (user_id,))
         _conn.commit()
@@ -474,3 +487,69 @@ def crawl_targets():
                ) GROUP BY mid"""
         ).fetchall()
         return [{"mid": r[0], "name": r[1], "avatar": r[2]} for r in rows]
+
+
+# ---------------- 我的收藏 ----------------
+def add_fav(user_id, item_type, item_id):
+    with _lock:
+        try:
+            _conn.execute(
+                """INSERT INTO user_favs (user_id, item_type, item_id, created_at)
+                   VALUES (?,?,?,?)""",
+                (user_id, item_type, item_id, time.strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            _conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def delete_fav(user_id, item_type, item_id):
+    with _lock:
+        _conn.execute(
+            "DELETE FROM user_favs WHERE user_id=? AND item_type=? AND item_id=?",
+            (user_id, item_type, item_id),
+        )
+        _conn.commit()
+
+
+def fav_ids(user_id):
+    with _lock:
+        rows = _conn.execute(
+            "SELECT item_type, item_id FROM user_favs WHERE user_id=?",
+            (user_id,),
+        ).fetchall()
+    out = {"post": [], "up": []}
+    for r in rows:
+        out.setdefault(r["item_type"], []).append(r["item_id"])
+    return out
+
+
+def list_favs(user_id, limit=100):
+    """收藏列表：帖子 + UP 内容合并，按收藏时间倒序。"""
+    with _lock:
+        posts = _conn.execute(
+            """SELECT f.created_at AS fav_at, f.item_id AS id, p.platform, p.title,
+                      p.summary, p.author, p.url, p.published_at, p.race
+               FROM user_favs f JOIN posts p ON p.id = f.item_id
+               WHERE f.user_id=? AND f.item_type='post'""",
+            (user_id,),
+        ).fetchall()
+        ups = _conn.execute(
+            """SELECT f.created_at AS fav_at, f.item_id AS id, u.source_type, u.title,
+                      u.summary, u.author, u.url, u.published_at, u.cover
+               FROM user_favs f JOIN up_posts u ON u.id = f.item_id
+               WHERE f.user_id=? AND f.item_type='up'""",
+            (user_id,),
+        ).fetchall()
+    items = []
+    for r in posts:
+        d = dict(r)
+        d["item_type"] = "post"
+        items.append(d)
+    for r in ups:
+        d = dict(r)
+        d["item_type"] = "up"
+        items.append(d)
+    items.sort(key=lambda x: x.get("fav_at") or "", reverse=True)
+    return items[:limit]

@@ -329,3 +329,14 @@ button.primary { background: var(--red); border: none; color: #fff; padding: 9px
 .search-item-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
 .search-item mark { background: #7c5cff33; color: #5b3fd4; padding: 0 2px; border-radius: 3px; }
 .search-empty { color: var(--muted); text-align: center; padding: 40px 0 20px; }
+
+/* ---- 我的收藏 ---- */
+.fav-btn {
+  background: none; border: none; font-size: 18px; line-height: 1;
+  cursor: pointer; color: var(--muted); padding: 0 2px;
+  transition: transform .12s, color .12s;
+}
+.fav-btn:hover { color: var(--red); transform: scale(1.2); }
+.fav-btn.on { color: var(--red); }
+.post-top .fav-btn { margin-left: auto; }
+#favs-list .post-summary { margin-top: 2px; }

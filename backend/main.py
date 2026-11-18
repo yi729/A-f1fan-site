@@ -314,6 +314,61 @@ def api_auth_delete(
     return {"ok": True}
 
 
+# ---------------- 我的收藏 ----------------
+@app.get("/api/favs/ids")
+def api_fav_ids(
+    authorization: str | None = Header(default=None),
+    x_user_token: str | None = Header(default=None),
+):
+    user_id = _auth_user(authorization, x_user_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return db.fav_ids(user_id)
+
+
+@app.get("/api/favs")
+def api_favs(
+    authorization: str | None = Header(default=None),
+    x_user_token: str | None = Header(default=None),
+):
+    user_id = _auth_user(authorization, x_user_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    return {"items": db.list_favs(user_id)}
+
+
+@app.post("/api/favs/{item_type}/{item_id}")
+def api_fav_add(
+    item_type: str,
+    item_id: int,
+    authorization: str | None = Header(default=None),
+    x_user_token: str | None = Header(default=None),
+):
+    user_id = _auth_user(authorization, x_user_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    if item_type not in ("post", "up"):
+        raise HTTPException(status_code=400, detail="类型无效")
+    db.add_fav(user_id, item_type, item_id)
+    return {"ok": True, "fav": True}
+
+
+@app.delete("/api/favs/{item_type}/{item_id}")
+def api_fav_delete(
+    item_type: str,
+    item_id: int,
+    authorization: str | None = Header(default=None),
+    x_user_token: str | None = Header(default=None),
+):
+    user_id = _auth_user(authorization, x_user_token)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    if item_type not in ("post", "up"):
+        raise HTTPException(status_code=400, detail="类型无效")
+    db.delete_fav(user_id, item_type, item_id)
+    return {"ok": True, "fav": False}
+
+
 @app.get("/api/ups/mine")
 def api_ups_mine(
     authorization: str | None = Header(default=None),
