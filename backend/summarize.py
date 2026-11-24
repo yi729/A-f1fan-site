@@ -61,6 +61,26 @@ def summarize(text, category, max_chars=2500):
         return None
 
 
+def summarize_xhs(text, max_chars=2500):
+    """小红书笔记摘要（标题+正文）。"""
+    if not API_KEY:
+        return None
+    text = (text or "").strip()
+    if not text:
+        return None
+    text = text[:max_chars]
+    prompt = (
+        "你是 F1 赛车内容编辑。阅读下面这则小红书笔记（标题+正文），"
+        "用 3~5 句话写一段中文摘要，概括核心内容、主要观点或关键信息。"
+        "不要编造原文没有的内容，直接输出摘要正文。\n\n"
+        "笔记内容：\n%s" % text
+    )
+    try:
+        return _call_deepseek(prompt)
+    except Exception:
+        return None
+
+
 def summarize_up(text, kind, max_chars=6000):
     """UP 主视频/专栏的通用内容摘要。kind 为「视频」或「专栏」。"""
     if not API_KEY:

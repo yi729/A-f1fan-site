@@ -21,6 +21,8 @@ FILES = [
     ("backend/upsub.py", "/opt/f1-site/backend/upsub.py"),
     ("backend/comment.py", "/opt/f1-site/backend/comment.py"),
     ("backend/main.py", "/opt/f1-site/backend/main.py"),
+    ("backend/pipeline.py", "/opt/f1-site/backend/pipeline.py"),
+    ("backend/xhs.py", "/opt/f1-site/backend/xhs.py"),
     ("deploy/refill_ai_subs.py", "/opt/f1-site/deploy/refill_ai_subs.py"),
     ("frontend/index.html", "/opt/f1-site/frontend/index.html"),
     ("frontend/app.js", "/opt/f1-site/frontend/app.js"),

@@ -38,6 +38,10 @@ def up_check_interval_hours():
     return float(os.environ.get("UP_CHECK_INTERVAL_HOURS", "2"))
 
 
+def xhs_interval_hours():
+    return float(os.environ.get("XHS_INTERVAL_HOURS", "3"))
+
+
 @asynccontextmanager
 async def lifespan(_app):
     global _scheduler
@@ -79,6 +83,16 @@ async def lifespan(_app):
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.now() + timedelta(minutes=15),
+    )
+    # 小红书抓取：启动 5 分钟后先跑一轮，之后每 3 小时
+    _scheduler.add_job(
+        pipeline.run_xhs,
+        "interval",
+        hours=xhs_interval_hours(),
+        id="auto-xhs",
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now() + timedelta(minutes=5),
     )
     _scheduler.start()
     yield
@@ -180,6 +194,19 @@ def api_scrape(
     if pipeline.is_running():
         return {"started": False, "busy": True}
     background_tasks.add_task(pipeline.run)
+    return {"started": True}
+
+
+@app.post("/api/scrape/xhs")
+def api_scrape_xhs(
+    background_tasks: BackgroundTasks,
+    token: str | None = None,
+    x_scrape_token: str | None = Header(default=None),
+):
+    _require_token(token, x_scrape_token)
+    if pipeline.is_running():
+        return {"started": False, "busy": True}
+    background_tasks.add_task(pipeline.run_xhs)
     return {"started": True}
 
 
@@ -502,12 +529,15 @@ def api_ups_check(
 def api_scheduler_status():
     job = _scheduler.get_job("auto-scrape") if _scheduler is not None else None
     up_job = _scheduler.get_job("auto-upcheck") if _scheduler is not None else None
+    xhs_job = _scheduler.get_job("auto-xhs") if _scheduler is not None else None
     return {
         "running": bool(_scheduler is not None and _scheduler.running),
         "intervalHours": scrape_interval_hours(),
         "nextRun": str(job.next_run_time) if job is not None and job.next_run_time else None,
         "upIntervalHours": up_check_interval_hours(),
         "upNextRun": str(up_job.next_run_time) if up_job is not None and up_job.next_run_time else None,
+        "xhsIntervalHours": xhs_interval_hours(),
+        "xhsNextRun": str(xhs_job.next_run_time) if xhs_job is not None and xhs_job.next_run_time else None,
     }
 
 

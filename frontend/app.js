@@ -12,6 +12,10 @@ function escapeHtml(s) {
   }[c]));
 }
 
+function platformLabel(p) {
+  return (p.platform === "xiaohongshu") ? "小红书" : "B站";
+}
+
 /* ---------------- 头像 / 队徽渲染 ----------------
    有图用 <img>，加载失败或无图回退彩色首字母徽章。 */
 function abbr(name) {
@@ -505,7 +509,7 @@ function renderPosts() {
     const hasOp = !!p.comment_summary;
     return (
       '<article class="post-card"' + (hasOp ? ' onclick="openOpModal(' + p.id + ', &quot;posts&quot;)"' : "") + ">" +
-      '<div class="post-top"><span class="platform">B站</span>' +
+      '<div class="post-top"><span class="platform">' + platformLabel(p) + "</span>" +
       '<span class="race">' + escapeHtml(p.race || SEASON_WIDE) + "</span>" +
       '<span class="cat">' + escapeHtml(p.category || "") + "</span>" +
       (hasOp ? '<span class="op-badge">观点</span>' : "") +
@@ -523,18 +527,17 @@ function renderPosts() {
   }).join("");
 }
 
-document.getElementById("btn-scrape").addEventListener("click", async () => {
-  const st = document.getElementById("scrape-status");
+async function submitScrape(path, st, runMsg, pollFn) {
   st.textContent = "提交抓取任务…";
   try {
-    let res = await fetch("/api/scrape", {
+    let res = await fetch(path, {
       method: "POST",
       headers: { "X-Scrape-Token": localStorage.getItem("scrapeToken") || "" },
     });
     if (res.status === 403) {
       const token = prompt("此站点开启了抓取口令，请输入口令：");
       if (token === null) { st.textContent = "已取消"; return; }
-      res = await fetch("/api/scrape", { method: "POST", headers: { "X-Scrape-Token": token } });
+      res = await fetch(path, { method: "POST", headers: { "X-Scrape-Token": token } });
       if (res.status === 403) { st.textContent = "口令不正确"; return; }
       localStorage.setItem("scrapeToken", token);
     }
@@ -544,16 +547,26 @@ document.getElementById("btn-scrape").addEventListener("click", async () => {
       st.textContent = "已有抓取任务在运行，请稍后再试";
       return;
     }
-    st.textContent = "抓取任务已启动（逐站扫描约需几分钟），完成后列表会自动更新";
+    st.textContent = runMsg;
     let tries = 0;
     const iv = setInterval(() => {
       tries += 1;
-      loadPosts();
+      pollFn();
       if (tries >= 8) clearInterval(iv);
     }, 60000);
   } catch (e) {
     st.textContent = "抓取失败: " + e;
   }
+}
+
+document.getElementById("btn-scrape").addEventListener("click", () => {
+  submitScrape("/api/scrape", document.getElementById("scrape-status"),
+    "抓取任务已启动（逐站扫描约需几分钟），完成后列表会自动更新", loadPosts);
+});
+
+document.getElementById("btn-scrape-xhs").addEventListener("click", () => {
+  submitScrape("/api/scrape/xhs", document.getElementById("scrape-status"),
+    "小红书抓取已启动（约需 1~2 分钟），完成后列表会自动更新", loadPosts);
 });
 
 function showSchedulerStatus() {
@@ -563,7 +576,7 @@ function showSchedulerStatus() {
       el.textContent = "定时抓取未启用";
       return;
     }
-    el.textContent = "帖子抓取：每 " + s.intervalHours + " 小时（下次 " + (s.nextRun || "—") + "）";
+    el.textContent = "帖子抓取：每 " + s.intervalHours + " 小时（下次 " + (s.nextRun || "—") + "）· 小红书每 " + (s.xhsIntervalHours || "—") + " 小时（下次 " + (s.xhsNextRun || "—") + "）";
     const upsEl = document.getElementById("ups-scheduler-status");
     if (upsEl) {
       upsEl.textContent = "UP 订阅检查：每 " + s.upIntervalHours + " 小时（下次 " + (s.upNextRun || "—") + "）";
@@ -714,7 +727,7 @@ function renderFavs(items) {
   }
   el.innerHTML = items.map((p) => {
     const type = p.item_type;
-    const label = type === "post" ? "B站" : (p.source_type === "video" ? "视频" : "专栏");
+    const label = type === "post" ? platformLabel(p) : (p.source_type === "video" ? "视频" : "专栏");
     return (
       '<article class="post-card">' +
       '<div class="post-top"><span class="platform">' + label + "</span>" +
@@ -1595,7 +1608,7 @@ function runSearch() {
         (p.summary ? '<div class="search-item-sum">' + hl(truncate(p.summary, 130), q) + "</div>" : "") +
         '<div class="search-item-meta">' + escapeHtml(p.author || "") + " · " +
         escapeHtml(p.published_at || "") + (p.race ? " · " + escapeHtml(p.race) : "") +
-        " · " + escapeHtml(p.platform || "") + "</div></a>"
+        " · " + platformLabel(p) + "</div></a>"
       ).join("");
     }
     if (ups.length) {
