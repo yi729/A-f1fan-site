@@ -16,6 +16,7 @@ import db
 import f1
 import pipeline
 import upsub
+import xhs
 import comment
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -211,6 +212,34 @@ def api_scrape_xhs(
 
 
 # ---------------- UP 订阅接口 ----------------
+def _resolve_up(text):
+    """解析订阅输入：小红书（主页链接/uid）优先，其余走 B站（链接/mid/名称）。
+
+    返回 {mid, name, avatar, platform}；B站返回的 mid 统一转字符串。
+    """
+    uid = xhs.resolve_uid(text)
+    if uid:
+        if not xhs.cookie_available():
+            raise HTTPException(status_code=400, detail="未配置小红书 Cookie（data/xhs_cookie.txt）")
+        try:
+            with xhs.browser():
+                r = xhs.user_notes(uid, pages=0)
+        except Exception:
+            raise HTTPException(status_code=404, detail="小红书主页打不开（可能被风控），请稍后再试")
+        return {
+            "mid": uid,
+            "name": (r or {}).get("nickname") or "",
+            "avatar": (r or {}).get("avatar") or "",
+            "platform": "xiaohongshu",
+        }
+    up = upsub.resolve_up(text)
+    if not up:
+        return None
+    up["mid"] = str(up["mid"])
+    up["platform"] = "bilibili"
+    return up
+
+
 @app.get("/api/ups")
 def api_ups():
     return db.list_subscriptions()
@@ -419,24 +448,24 @@ def api_ups_mine_add(
     if db.user_sub_count(user_id) >= MAX_SUBS_PER_USER:
         raise HTTPException(status_code=400, detail="最多订阅 %d 个 UP" % MAX_SUBS_PER_USER)
     text = (payload or {}).get("text") or ""
-    up = upsub.resolve_up(text)
+    up = _resolve_up(text)
     if not up:
         raise HTTPException(status_code=404, detail="未找到该 UP 主，请检查链接或名称")
-    db.add_user_sub(user_id, up["mid"], up["name"], up["avatar"])
-    upsub.check_up_mid(up["mid"], up["name"])
-    return {"ok": True, "subscription": {"mid": up["mid"], "name": up["name"], "avatar": up["avatar"]}}
+    db.add_user_sub(user_id, up["mid"], up["name"], up["avatar"], up["platform"])
+    upsub.check_up_mid(up["mid"], up["name"], up["platform"])
+    return {"ok": True, "subscription": {"mid": up["mid"], "name": up["name"], "avatar": up["avatar"], "platform": up["platform"]}}
 
 
 @app.post("/api/ups/mine/{mid}/toggle")
 def api_ups_mine_toggle(
-    mid: int,
+    mid: str,
     authorization: str | None = Header(default=None),
     x_user_token: str | None = Header(default=None),
 ):
     user_id = _auth_user(authorization, x_user_token)
     if not user_id:
         raise HTTPException(status_code=401, detail="请先登录")
-    sub = next((s for s in db.list_user_subs(user_id) if s["mid"] == mid), None)
+    sub = next((s for s in db.list_user_subs(user_id) if str(s["mid"]) == mid), None)
     if not sub:
         raise HTTPException(status_code=404, detail="订阅不存在")
     enabled = not sub["enabled"]
@@ -446,7 +475,7 @@ def api_ups_mine_toggle(
 
 @app.delete("/api/ups/mine/{mid}")
 def api_ups_mine_delete(
-    mid: int,
+    mid: str,
     authorization: str | None = Header(default=None),
     x_user_token: str | None = Header(default=None),
 ):
@@ -463,24 +492,25 @@ def api_ups_add(
     token: str | None = None,
     x_scrape_token: str | None = Header(default=None),
 ):
-    """添加订阅：payload 为 {"text": "空间链接 / mid / UP 名称"}。"""
+    """添加订阅：payload 为 {"text": "B站空间链接/mid/UP名 或 小红书主页链接/uid"}。"""
     _require_token(token, x_scrape_token)
     text = (payload or {}).get("text") or ""
-    up = upsub.resolve_up(text)
+    up = _resolve_up(text)
     if not up:
         raise HTTPException(status_code=404, detail="未找到该 UP 主，请检查链接或名称")
-    db.add_subscription(up["mid"], up["name"], up["avatar"])
-    return {"ok": True, "subscription": {"mid": up["mid"], "name": up["name"], "avatar": up["avatar"]}}
+    db.add_subscription(up["mid"], up["name"], up["avatar"], up["platform"])
+    upsub.check_up_mid(up["mid"], up["name"], up["platform"])
+    return {"ok": True, "subscription": {"mid": up["mid"], "name": up["name"], "avatar": up["avatar"], "platform": up["platform"]}}
 
 
 @app.post("/api/ups/{mid}/toggle")
 def api_ups_toggle(
-    mid: int,
+    mid: str,
     token: str | None = None,
     x_scrape_token: str | None = Header(default=None),
 ):
     _require_token(token, x_scrape_token)
-    sub = next((s for s in db.list_subscriptions() if s["mid"] == mid), None)
+    sub = next((s for s in db.list_subscriptions() if str(s["mid"]) == mid), None)
     if not sub:
         raise HTTPException(status_code=404, detail="订阅不存在")
     enabled = not sub["enabled"]
@@ -490,7 +520,7 @@ def api_ups_toggle(
 
 @app.delete("/api/ups/{mid}")
 def api_ups_delete(
-    mid: int,
+    mid: str,
     token: str | None = None,
     x_scrape_token: str | None = Header(default=None),
 ):

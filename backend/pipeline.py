@@ -218,55 +218,51 @@ def _run_xhs(budget, per_kw):
     try:
         if not xhs.cookie_available():
             raise RuntimeError("未配置小红书 Cookie（data/xhs_cookie.txt）")
-        xhs.launch()
-        start = db.run_count() % len(XHS_KEYWORDS)
-        now = time.time()
-        for i in range(min(budget, len(XHS_KEYWORDS))):
-            kw = XHS_KEYWORDS[(start + i) % len(XHS_KEYWORDS)]
-            try:
-                items = xhs.search_notes(kw)
-            except Exception as e:
-                error = str(e)
-                break
-            for it in items[:per_kw]:
-                note_id = it["note_id"]
-                if not note_id or db.post_exists("xiaohongshu", note_id):
-                    continue
+        with xhs.browser():
+            xhs.launch()
+            start = db.run_count() % len(XHS_KEYWORDS)
+            now = time.time()
+            for i in range(min(budget, len(XHS_KEYWORDS))):
+                kw = XHS_KEYWORDS[(start + i) % len(XHS_KEYWORDS)]
                 try:
-                    detail = xhs.get_note(note_id, it["xsec_token"])
-                except Exception:
-                    detail = None
-                title = (detail or {}).get("title") or it["title"]
-                desc = (detail or {}).get("desc") or ""
-                author = (detail or {}).get("author") or it["author"]
-                published = xhs.ms_to_date((detail or {}).get("time") or it["time"])
-                total += 1
-                if not title or not published:
-                    continue
-                try:
-                    ts = time.mktime(time.strptime(published, "%Y-%m-%d"))
-                except Exception:
-                    ts = 0
-                if ts and now - ts > XHS_MAX_AGE_DAYS * 86400:
-                    continue
-                raw = title + "\n" + desc
-                summary = summarize.summarize_xhs(raw)
-                race_name = race.detect_race(title, desc)
-                if db.add_post(
-                    "xiaohongshu", note_id, title, author,
-                    xhs.note_url(note_id, it["xsec_token"]),
-                    published, "赛事资讯", raw, summary, race_name,
-                ):
-                    added += 1
-                time.sleep(1.2)
-            time.sleep(4)
-        db.log_run(total, added, error)
+                    items = xhs.search_notes(kw)
+                except Exception as e:
+                    error = str(e)
+                    break
+                for it in items[:per_kw]:
+                    note_id = it["note_id"]
+                    if not note_id or db.post_exists("xiaohongshu", note_id):
+                        continue
+                    try:
+                        detail = xhs.get_note(note_id, it["xsec_token"])
+                    except Exception:
+                        detail = None
+                    title = (detail or {}).get("title") or it["title"]
+                    desc = (detail or {}).get("desc") or ""
+                    author = (detail or {}).get("author") or it["author"]
+                    published = xhs.ms_to_date((detail or {}).get("time") or it["time"])
+                    total += 1
+                    if not title or not published:
+                        continue
+                    try:
+                        ts = time.mktime(time.strptime(published, "%Y-%m-%d"))
+                    except Exception:
+                        ts = 0
+                    if ts and now - ts > XHS_MAX_AGE_DAYS * 86400:
+                        continue
+                    raw = title + "\n" + desc
+                    summary = summarize.summarize_xhs(raw)
+                    race_name = race.detect_race(title, desc)
+                    if db.add_post(
+                        "xiaohongshu", note_id, title, author,
+                        xhs.note_url(note_id, it["xsec_token"]),
+                        published, "赛事资讯", raw, summary, race_name,
+                    ):
+                        added += 1
+                    time.sleep(1.2)
+                time.sleep(4)
+            db.log_run(total, added, error)
     except Exception as e:
         error = str(e)
         db.log_run(total, added, error)
-    finally:
-        try:
-            xhs.close()
-        except Exception:
-            pass
     return {"total": total, "added": added, "error": error, "busy": False}

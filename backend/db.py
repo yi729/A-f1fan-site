@@ -55,13 +55,37 @@ def init(db_path):
         # UP 主订阅与内容汇总
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS up_subscriptions (
-                mid INTEGER PRIMARY KEY,
+                mid TEXT PRIMARY KEY,
                 name TEXT,
                 avatar TEXT,
                 enabled INTEGER DEFAULT 1,
-                created_at TEXT
+                created_at TEXT,
+                platform TEXT DEFAULT 'bilibili'
             )"""
         )
+        # 迁移：老库 mid 为 INTEGER PRIMARY KEY（不能存小红书 uid），重建为 TEXT
+        sub_cols = [r for r in _conn.execute("PRAGMA table_info(up_subscriptions)").fetchall()]
+        if sub_cols and sub_cols[0][2].upper() != "TEXT":
+            _conn.execute(
+                """CREATE TABLE up_subscriptions_new (
+                    mid TEXT PRIMARY KEY,
+                    name TEXT,
+                    avatar TEXT,
+                    enabled INTEGER DEFAULT 1,
+                    created_at TEXT,
+                    platform TEXT DEFAULT 'bilibili'
+                )"""
+            )
+            _conn.execute(
+                "INSERT INTO up_subscriptions_new (mid, name, avatar, enabled, created_at, platform) "
+                "SELECT mid, name, avatar, enabled, created_at, 'bilibili' FROM up_subscriptions"
+            )
+            _conn.execute("DROP TABLE up_subscriptions")
+            _conn.execute("ALTER TABLE up_subscriptions_new RENAME TO up_subscriptions")
+        else:
+            cols = [r[1] for r in sub_cols]
+            if "platform" not in cols:
+                _conn.execute("ALTER TABLE up_subscriptions ADD COLUMN platform TEXT DEFAULT 'bilibili'")
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS up_posts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +100,8 @@ def init(db_path):
                 summary TEXT,
                 summary_type TEXT,
                 subtitle_text TEXT DEFAULT '',
-                created_at TEXT
+                created_at TEXT,
+                platform TEXT DEFAULT 'bilibili'
             )"""
         )
         _conn.execute(
@@ -91,6 +116,8 @@ def init(db_path):
             _conn.execute("ALTER TABLE up_posts ADD COLUMN comment_at TEXT")
         if "comment_samples" not in cols:
             _conn.execute("ALTER TABLE up_posts ADD COLUMN comment_samples TEXT")
+        if "platform" not in cols:
+            _conn.execute("ALTER TABLE up_posts ADD COLUMN platform TEXT DEFAULT 'bilibili'")
         # 用户账号与个人订阅
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS users (
@@ -116,12 +143,16 @@ def init(db_path):
                 name TEXT,
                 avatar TEXT,
                 enabled INTEGER DEFAULT 1,
-                created_at TEXT
+                created_at TEXT,
+                platform TEXT DEFAULT 'bilibili'
             )"""
         )
         _conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_user_subs_user_mid ON user_subs(user_id, mid)"
         )
+        us_cols = [r[1] for r in _conn.execute("PRAGMA table_info(user_subs)").fetchall()]
+        if "platform" not in us_cols:
+            _conn.execute("ALTER TABLE user_subs ADD COLUMN platform TEXT DEFAULT 'bilibili'")
         _conn.execute(
             """CREATE TABLE IF NOT EXISTS user_favs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,14 +273,15 @@ def log_run(total, added, error=None):
 
 
 # ---------------- UP 主订阅 ----------------
-def add_subscription(mid, name, avatar):
+def add_subscription(mid, name, avatar, platform="bilibili"):
     """新增或恢复订阅（重复添加会更新资料并重新启用）。"""
     with _lock:
         _conn.execute(
-            """INSERT INTO up_subscriptions (mid, name, avatar, enabled, created_at)
-               VALUES (?,?,?,1,?)
-               ON CONFLICT(mid) DO UPDATE SET name=excluded.name, avatar=excluded.avatar, enabled=1""",
-            (mid, name, avatar, time.strftime("%Y-%m-%d %H:%M:%S")),
+            """INSERT INTO up_subscriptions (mid, name, avatar, enabled, created_at, platform)
+               VALUES (?,?,?,1,?,?)
+               ON CONFLICT(mid) DO UPDATE SET name=excluded.name, avatar=excluded.avatar,
+               enabled=1, platform=excluded.platform""",
+            (mid, name, avatar, time.strftime("%Y-%m-%d %H:%M:%S"), platform),
         )
         _conn.commit()
 
@@ -287,15 +319,15 @@ def up_post_exists(source_type, source_id):
 
 
 def add_up_post(mid, source_type, source_id, title, author, url, cover,
-                published_at, summary, summary_type, subtitle_text=""):
+                published_at, summary, summary_type, subtitle_text="", platform="bilibili"):
     with _lock:
         cur = _conn.execute(
             """INSERT OR IGNORE INTO up_posts
                (mid, source_type, source_id, title, author, url, cover,
-                published_at, summary, summary_type, subtitle_text, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                published_at, summary, summary_type, subtitle_text, platform, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (mid, source_type, source_id, title, author, url, cover,
-             published_at, summary, summary_type, subtitle_text,
+             published_at, summary, summary_type, subtitle_text, platform,
              time.strftime("%Y-%m-%d %H:%M:%S")),
         )
         _conn.commit()
@@ -432,14 +464,14 @@ def delete_user(user_id):
 
 
 # ---------------- 个人订阅 ----------------
-def add_user_sub(user_id, mid, name, avatar):
+def add_user_sub(user_id, mid, name, avatar, platform="bilibili"):
     with _lock:
         _conn.execute(
-            """INSERT INTO user_subs (user_id, mid, name, avatar, enabled, created_at)
-               VALUES (?,?,?,?,1,?)
+            """INSERT INTO user_subs (user_id, mid, name, avatar, enabled, created_at, platform)
+               VALUES (?,?,?,?,1,?,?)
                ON CONFLICT(user_id, mid) DO UPDATE SET name=excluded.name,
-               avatar=excluded.avatar, enabled=1""",
-            (user_id, mid, name, avatar, time.strftime("%Y-%m-%d %H:%M:%S")),
+               avatar=excluded.avatar, enabled=1, platform=excluded.platform""",
+            (user_id, mid, name, avatar, time.strftime("%Y-%m-%d %H:%M:%S"), platform),
         )
         _conn.commit()
 
@@ -480,13 +512,14 @@ def crawl_targets():
     """抓取目标：公共订阅 + 全部用户订阅的去重并集（仅启用中的）。"""
     with _lock:
         rows = _conn.execute(
-            """SELECT mid, MAX(name), MAX(avatar) FROM (
-                   SELECT mid, name, avatar FROM up_subscriptions WHERE enabled=1
+            """SELECT mid, MAX(name), MAX(avatar), MAX(platform) FROM (
+                   SELECT mid, name, avatar, platform FROM up_subscriptions WHERE enabled=1
                    UNION ALL
-                   SELECT mid, name, avatar FROM user_subs WHERE enabled=1
+                   SELECT mid, name, avatar, platform FROM user_subs WHERE enabled=1
                ) GROUP BY mid"""
         ).fetchall()
-        return [{"mid": r[0], "name": r[1], "avatar": r[2]} for r in rows]
+        return [{"mid": r[0], "name": r[1], "avatar": r[2], "platform": r[3] or "bilibili"}
+                for r in rows]
 
 
 # ---------------- 我的收藏 ----------------

@@ -10,6 +10,8 @@
 - 空间投稿接口对大号 UP 风控严（-412/-352），失败时按 UP 名搜索视频
   +作者名过滤兜底（实测覆盖近全部近期投稿）。
 - AI 字幕可能发布后数小时才生成：recheck_subtitles 每周复查近期「简介」视频。
+- 小红书 UP（platform=xiaohongshu）：主页 user_posted 接口翻页取作品列表，
+  逐个打开详情页取正文 → 摘要入库（source_type='note'）。
 - 同一时刻只允许一个检查任务（含手动与定时）。
 """
 import re
@@ -20,10 +22,14 @@ import requests
 
 import bilibili
 import db
+import race
 import summarize
 
 # 每轮每个 UP 最多新增处理的条目数
 PER_UP_BUDGET = 20
+
+# 每轮每个小红书 UP 最多新增处理的笔记数（AI 摘要成本，首次订阅分多轮回填）
+XHS_UP_BUDGET = 8
 
 # 只收录最近 N 天发布的内容（订阅后不再回吃历史投稿）
 MAX_AGE_DAYS = 30
@@ -35,16 +41,19 @@ _run_lock = threading.Lock()
 _single_lock = threading.Lock()
 
 
-def check_up_mid(mid, name=""):
+def check_up_mid(mid, name="", platform="bilibili"):
     """后台检查单个 UP（新增订阅后立即拉一轮），已有任务在跑则跳过。"""
     if _run_lock.locked() or not _single_lock.acquire(blocking=False):
         return False
 
     def _job():
         try:
-            bilibili.load_cookie()
-            summarize.load_config()
-            _check_up(mid, name)
+            if platform == "xiaohongshu":
+                _check_xhs_up(mid, name)
+            else:
+                bilibili.load_cookie()
+                summarize.load_config()
+                _check_up(mid, name)
         except Exception:
             pass
         finally:
@@ -135,7 +144,10 @@ def _run():
         name = t.get("name") or ("mid=" + str(t["mid"]))
         checked += 1
         try:
-            added += _check_up(t["mid"], name)
+            if t.get("platform") == "xiaohongshu":
+                added += _check_xhs_up(t["mid"], name)
+            else:
+                added += _check_up(t["mid"], name)
         except Exception as e:
             errors.append("%s: %s" % (name, e))
         time.sleep(8)  # UP 之间放宽节奏
@@ -324,9 +336,73 @@ def _check_up(mid, name=""):
     return added
 
 
+def _check_xhs_up(uid, name=""):
+    """轮询一个小红书 UP：主页作品列表 → 逐条详情正文 → 摘要入库。
+
+    与 B站 _check_up 共用一个预算上限（首次订阅分多轮回填历史），
+    详情页打开失败时退回列表标题做摘要。浏览器会话由 xhs.browser()
+    串行独占（与小红书搜索抓取互斥）。
+    """
+    import xhs
+
+    if not xhs.cookie_available():
+        raise RuntimeError("未配置小红书 Cookie（data/xhs_cookie.txt）")
+    summarize.load_config()
+    budget = XHS_UP_BUDGET
+    added = 0
+    min_ts = time.time() - MAX_AGE_DAYS * 86400
+    with xhs.browser():
+        try:
+            r = xhs.user_notes(uid, pages=2)
+        except RuntimeError:
+            raise
+        except Exception as e:
+            raise RuntimeError("主页拉取失败: %s" % e)
+        notes = r.get("notes") or []
+        for n in notes:
+            if budget <= 0:
+                break
+            note_id = n.get("note_id")
+            if not note_id or db.up_post_exists("note", note_id):
+                continue
+            ts = (n.get("time") or 0) / 1000
+            if ts > 0 and ts < min_ts:
+                continue
+            try:
+                detail = xhs.get_note(note_id, n.get("xsec_token"))
+            except Exception:
+                detail = None
+            title = (detail or {}).get("title") or n.get("title") or ""
+            desc = (detail or {}).get("desc") or ""
+            author = (detail or {}).get("author") or n.get("user", {}).get("nickname") or ""
+            published = xhs.ms_to_date((detail or {}).get("time") or n.get("time"))
+            if not title or not published:
+                continue
+            raw = title + "\n" + desc
+            try:
+                summary = summarize.summarize_xhs(raw)
+            except Exception as e:
+                raise RuntimeError("摘要失败: %s" % e)
+            if db.add_up_post(
+                uid, "note", note_id,
+                title,
+                author,
+                xhs.note_url(note_id, n.get("xsec_token")),
+                n.get("cover") or "",
+                published,
+                summary,
+                "全文" if desc else "简介",
+                "",
+                "xiaohongshu",
+            ):
+                added += 1
+                budget -= 1
+            time.sleep(1.5)
+    return added
+
+
 # 字幕复查：只复查最近 N 天发布、仍是「简介」的视频
 RESUB_DAYS = 7
-
 # 每轮最多复查的视频数（限流友好）
 RESUB_BUDGET = 25
 

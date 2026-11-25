@@ -448,6 +448,7 @@ function loadPosts() {
 
 function buildPostsFilter(posts) {
   const sel = document.getElementById("posts-race-filter");
+  document.getElementById("posts-platform-filter").onchange = () => renderPosts();
   const names = new Set();
   let hasSeasonWide = false;
   posts.forEach((p) => {
@@ -490,12 +491,14 @@ function buildPostsFilter(posts) {
 
 function renderPosts() {
   const el = document.getElementById("posts-list");
+  const pf = document.getElementById("posts-platform-filter").value;
   const race = document.getElementById("posts-race-filter").value;
   const ym = document.getElementById("posts-time-filter").value;
   const st = document.getElementById("posts-stance-filter").value;
-  // 分站/时间/立场三条件过滤；列表按发布时间倒序（无日期的排最后）
+  // 平台/分站/时间/立场四条件过滤；列表按发布时间倒序（无日期的排最后）
   const posts = window._posts
-    .filter((p) => (!race || (p.race || SEASON_WIDE) === race) &&
+    .filter((p) => (!pf || p.platform === pf) &&
+                  (!race || (p.race || SEASON_WIDE) === race) &&
                   (!ym || String(p.published_at || "").startsWith(ym)) &&
                   (!st || opStances(p).has(st)))
     .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || "") ||
@@ -929,16 +932,24 @@ function loadUps() {
     });
 }
 
+function platformName(p) {
+  return p === "xiaohongshu" ? "小红书" : "B站";
+}
+
+function midJs(mid) {
+  return "&quot;" + String(mid).replace(/[&<>"]/g, "") + "&quot;";
+}
+
 function subCard(u, mine) {
   const toggle = mine ? "toggleMyUp" : "toggleUp";
   const del = mine ? "delMyUp" : "delUp";
   return (
     '<div class="up-sub-card">' +
-    avatarHtml(u.avatar, abbr(u.name), "#fb7299") +
-    '<div class="up-sub-info"><div class="up-sub-name up-sub-name-link" onclick="jumpToUp(' + u.mid + ')" title="跳转到该 UP 的汇总">' + escapeHtml(u.name) + "</div>" +
-    '<div class="muted">mid: ' + u.mid + " · " + (u.enabled ? "已启用" : "已停用") + "</div></div>" +
-    '<button class="btn-sm" onclick="' + toggle + "(" + u.mid + ')">' + (u.enabled ? "停用" : "启用") + "</button>" +
-    '<button class="btn-sm danger" onclick="' + del + "(" + u.mid + ')">删除</button>' +
+    avatarHtml(u.avatar, abbr(u.name), u.platform === "xiaohongshu" ? "#ff2442" : "#fb7299") +
+    '<div class="up-sub-info"><div class="up-sub-name up-sub-name-link" onclick="jumpToUp(' + midJs(u.mid) + ')" title="跳转到该 UP 的汇总">' + escapeHtml(u.name) + "</div>" +
+    '<div class="muted">' + platformName(u.platform) + " · " + (u.enabled ? "已启用" : "已停用") + "</div></div>" +
+    '<button class="btn-sm" onclick="' + toggle + "(" + midJs(u.mid) + ')">' + (u.enabled ? "停用" : "启用") + "</button>" +
+    '<button class="btn-sm danger" onclick="' + del + "(" + midJs(u.mid) + ')">删除</button>' +
     "</div>"
   );
 }
@@ -946,9 +957,9 @@ function subCard(u, mine) {
 function subCardReadOnly(u) {
   return (
     '<div class="up-sub-card">' +
-    avatarHtml(u.avatar, abbr(u.name), "#fb7299") +
-    '<div class="up-sub-info"><div class="up-sub-name up-sub-name-link" onclick="jumpToUp(' + u.mid + ')" title="跳转到该 UP 的汇总">' + escapeHtml(u.name) + "</div>" +
-    '<div class="muted">mid: ' + u.mid + " · " + (u.enabled ? "已启用" : "已停用") + "</div></div>" +
+    avatarHtml(u.avatar, abbr(u.name), u.platform === "xiaohongshu" ? "#ff2442" : "#fb7299") +
+    '<div class="up-sub-info"><div class="up-sub-name up-sub-name-link" onclick="jumpToUp(' + midJs(u.mid) + ')" title="跳转到该 UP 的汇总">' + escapeHtml(u.name) + "</div>" +
+    '<div class="muted">' + platformName(u.platform) + " · " + (u.enabled ? "已启用" : "已停用") + "</div></div>" +
     "</div>"
   );
 }
@@ -992,40 +1003,42 @@ function renderUps() {
   }
   const byMid = {};
   upPosts.forEach((p) => {
-    (byMid[p.mid] = byMid[p.mid] || []).push(p);
+    const k = String(p.mid);
+    (byMid[k] = byMid[k] || []).push(p);
   });
   const groups = [];
   const seen = new Set();
   const subs = [];
   (window._ups || []).concat(window._myUps || []).forEach((u) => {
-    if (!seen.has(Number(u.mid))) {
-      seen.add(Number(u.mid));
+    const k = String(u.mid);
+    if (!seen.has(k)) {
+      seen.add(k);
       subs.push(u);
     }
   });
   subs.forEach((u) => {
-    if (byMid[u.mid]) {
-      groups.push({ sub: u, posts: byMid[u.mid] });
+    if (byMid[String(u.mid)]) {
+      groups.push({ sub: u, posts: byMid[String(u.mid)] });
     }
   });
   const others = Object.keys(byMid)
-    .filter((mid) => !seen.has(Number(mid)))
+    .filter((mid) => !seen.has(mid))
     .map((mid) => ({
-      sub: { mid: Number(mid), name: byMid[mid][0].author || "已删除的订阅", avatar: "" },
+      sub: { mid: mid, name: byMid[mid][0].author || "已删除的订阅", avatar: "", platform: byMid[mid][0].platform },
       posts: byMid[mid],
     }));
   groups.push(...others);
   const newest = (g) => g.posts[0].published_at || "";
   groups.sort((a, b) => (newest(a) < newest(b) ? 1 : -1));
   listEl.innerHTML = groups.map((g) => {
-    const mid = g.sub.mid;
+    const mid = String(g.sub.mid);
     const collapsed = window._collapsedUps.has(mid);
     return (
       '<section class="up-group" id="up-group-' + mid + '">' +
-      '<div class="up-group-head up-group-toggle" onclick="toggleUpGroup(' + mid + ')" title="点击收缩 / 展开">' +
-      avatarHtml(g.sub.avatar, abbr(g.sub.name), "#fb7299") +
+      '<div class="up-group-head up-group-toggle" onclick="toggleUpGroup(' + midJs(mid) + ')" title="点击收缩 / 展开">' +
+      avatarHtml(g.sub.avatar, abbr(g.sub.name), g.sub.platform === "xiaohongshu" ? "#ff2442" : "#fb7299") +
       '<span class="up-group-name">' + escapeHtml(g.sub.name) + "</span>" +
-      '<span class="up-group-count">' + g.posts.length + " 条</span>" +
+      '<span class="up-group-count">' + g.posts.length + " 条 · " + platformName(g.sub.platform) + "</span>" +
       '<span class="up-group-arrow" id="up-group-arrow-' + mid + '">' + (collapsed ? "▶" : "▼") + "</span>" +
       "</div>" +
       '<div class="up-group-body" id="up-group-body-' + mid + '"' + (collapsed ? ' style="display:none"' : "") + ">" +
@@ -1040,6 +1053,7 @@ document.getElementById("ups-stance-filter").onchange = renderUps;
 window._collapsedUps = new Set(JSON.parse(localStorage.getItem("collapsedUps") || "[]"));
 
 function toggleUpGroup(mid) {
+  mid = String(mid);
   if (window._collapsedUps.has(mid)) window._collapsedUps.delete(mid);
   else window._collapsedUps.add(mid);
   localStorage.setItem("collapsedUps", JSON.stringify(Array.from(window._collapsedUps)));
@@ -1050,6 +1064,7 @@ function toggleUpGroup(mid) {
 }
 
 function jumpToUp(mid) {
+  mid = String(mid);
   if (window._collapsedUps.has(mid)) toggleUpGroup(mid);
   const el = document.getElementById("up-group-" + mid);
   if (!el) { upsStatus("该 UP 暂无汇总内容"); return; }
@@ -1068,6 +1083,7 @@ function jumpToUp(mid) {
 }
 
 function upPostCard(p) {
+  const isXhs = p.platform === "xiaohongshu";
   const hasSub = !!(p.source_type === "video" && p.subtitle_text);
   const hasOp = !!(p.source_type === "video" && p.comment_summary);
   const cardClick = hasSub
@@ -1080,24 +1096,26 @@ function upPostCard(p) {
       (hasSub ? ' onclick="event.stopPropagation(); openOpModal(' + p.id + ', &quot;ups&quot;)"' : "") +
       ">观点</span>"
     : "";
+  const platformLabel = isXhs ? "笔记" : (p.source_type === "video" ? "视频" : "专栏");
+  const jumpTo = isXhs ? "去 小红书 →" : "去 B站 →";
   return (
     '<article class="post-card up-post' + (hasSub ? " has-sub" : "") + '"' + cardClick + ">" +
     (p.cover
       ? '<img class="up-cover" src="' + escapeHtml(p.cover) + '" loading="lazy" alt="" onerror="this.remove()">'
       : "") +
-    '<div class="post-top"><span class="platform">' + (p.source_type === "video" ? "视频" : "专栏") + "</span>" +
+    '<div class="post-top"><span class="platform">' + platformLabel + "</span>" +
     '<span class="race">' + escapeHtml(p.summary_type || "—") + "</span>" + opBadge +
     favBtn("up", p.id) + "</div>" +
     '<a class="post-title" href="' + (hasSub || hasOp ? "javascript:void(0)" : escapeHtml(p.url || "#")) + '"' +
     (hasSub || hasOp ? "" : ' target="_blank" rel="noopener"') + ">" +
     escapeHtml(p.title || "无标题") + "</a>" +
     '<div class="post-author">' + escapeHtml(p.published_at || "") + "</div>" +
-    '<div class="post-summary">' + escapeHtml(p.summary || "（暂无摘要，点标题去原视频）") + "</div>" +
+    '<div class="post-summary">' + escapeHtml(p.summary || "（暂无摘要，点标题去原" + (isXhs ? "笔记" : "视频") + "）") + "</div>" +
     (hasSub
       ? '<span class="jump">查看字幕总结 →</span>'
       : hasOp
         ? '<span class="jump">查看评论区观点 →</span>'
-        : '<a class="jump" href="' + escapeHtml(p.url || "#") + '" target="_blank" rel="noopener">去 B站 →</a>') +
+        : '<a class="jump" href="' + escapeHtml(p.url || "#") + '" target="_blank" rel="noopener">' + jumpTo + "</a>") +
     "</article>"
   );
 }

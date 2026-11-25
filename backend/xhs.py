@@ -12,11 +12,14 @@ DevTools Network 面板复制任一 xiaohongshu.com 请求的 Cookie 行），
 
 内存控制：整个抓取任务共享一个浏览器实例，任务结束即关闭，不常驻。
 """
+import re
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
 
 SEARCH_API = "sns/web/v2/search/notes"
+USER_POSTED_API = "user_posted"
 
 _COOKIE_PATH = Path(__file__).resolve().parent.parent / "data" / "xhs_cookie.txt"
 
@@ -101,6 +104,27 @@ def close():
     _pw = _browser = _context = _page = None
 
 
+_browser_lock = threading.Lock()
+
+
+class browser:
+    """串行独占浏览器：进入时取锁，退出时关闭浏览器并释放锁。
+
+    小红书抓取（pipeline）与 UP 检查（upsub）是两套独立调度锁，
+    可能并发触发；浏览器是模块级单例，必须互斥使用，否则一个
+    launch() 会关掉另一个任务正在用的实例。
+    """
+
+    def __enter__(self):
+        _browser_lock.acquire()
+
+    def __exit__(self, *exc):
+        try:
+            close()
+        finally:
+            _browser_lock.release()
+
+
 def _wait_json(action, api_kw, timeout=25000):
     """执行 action（页面导航），拦截并返回 URL 含 api_kw 的 JSON 响应；无匹配返回 None。"""
     try:
@@ -149,6 +173,7 @@ def search_notes(keyword):
             "xsec_token": it.get("xsec_token") or "",
             "title": card.get("display_title") or "",
             "author": user.get("nickname") or "",
+            "user_id": user.get("user_id") or "",
             "likes": interact.get("liked_count") or 0,
             "cover": cover.get("url_default") or cover.get("url") or "",
             "is_video": card.get("type") == "video",
@@ -210,3 +235,112 @@ def note_url(note_id, xsec_token=""):
     if xsec_token:
         url += "?xsec_token=" + quote(xsec_token)
     return url
+
+
+def resolve_uid(text):
+    """从「个人主页链接 / uid」解析小红书 uid，非小红书输入返回 None。
+
+    小红书 uid 为 24 位十六进制（如 63354465000000001802ee12），
+    与 B站纯数字 mid 天然不冲突。
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    m = re.search(r"xiaohongshu\.com/user/profile/([0-9a-fA-F]+)", text)
+    if m:
+        return m.group(1).lower()
+    if re.fullmatch(r"[0-9a-fA-F]{20,32}", text):
+        return text.lower()
+    return None
+
+
+def _cover_url(c):
+    if isinstance(c, dict):
+        return c.get("url_default") or c.get("url") or c.get("url_pre") or ""
+    return c or ""
+
+
+USER_INFO_JS = """() => {
+  const st = window.__INITIAL_STATE__;
+  if (!st || !st.user) return null;
+  const u = st.user;
+  const d = u.userPageData || u.userData || u.user || {};
+  const info = d.basicInfo || d.basicUserInfo || d.userInfo || {};
+  const nickname = info.nickname || info.nickName || d.nickname || "";
+  let avatar = info.images || info.avatar || info.imageb || info.image || "";
+  if (typeof avatar === "object" && avatar) avatar = avatar.url || "";
+  if (!nickname && !avatar) return null;
+  return { nickname: nickname || "", avatar: avatar || "" };
+}"""
+
+
+def user_notes(uid, pages=2):
+    """抓取 UP 主页作品列表，返回 {uid, nickname, avatar, notes:[...]}。
+
+    第一页 user_posted 接口由页面加载自动触发；后续页靠滚动触发，
+    每滚一次页面会带 cursor 再发一次。pages<=0 只取资料不翻页。
+    Cookie 失效或请求被风控时抛 RuntimeError。
+    """
+    _ensure_page()
+    url = "https://www.xiaohongshu.com/user/profile/" + uid
+    data = _wait_json(
+        lambda: _page.goto(url, wait_until="domcontentloaded"), USER_POSTED_API
+    )
+    if data is None:
+        try:
+            html = _page.content() or ""
+        except Exception:
+            html = ""
+        if "登录" in html and "xiaohongshu" in _page.url:
+            raise RuntimeError("小红书 Cookie 已失效，请重新导出（data/xhs_cookie.txt）")
+        raise RuntimeError("UP 主页请求未返回（可能被风控）：" + uid)
+
+    by_id = {}
+    nickname = avatar = ""
+
+    def absorb(d):
+        nonlocal nickname, avatar
+        payload = (d or {}).get("data") or {}
+        for n in payload.get("notes") or []:
+            nid = n.get("note_id") or ""
+            if not nid or nid in by_id:
+                continue
+            user = n.get("user") or {}
+            by_id[nid] = {
+                "note_id": nid,
+                "xsec_token": n.get("xsec_token") or "",
+                "title": n.get("display_title") or n.get("title") or "",
+                "time": n.get("time") or 0,  # 毫秒时间戳
+                "is_video": n.get("type") == "video",
+                "likes": (n.get("interact_info") or {}).get("liked_count") or 0,
+                "cover": _cover_url(n.get("cover") or {}),
+                "user": user,
+            }
+            if not nickname and user.get("nickname"):
+                nickname = user.get("nickname") or ""
+                avatar = user.get("avatar") or ""
+
+    if not data.get("success"):
+        raise RuntimeError(
+            "UP 主页接口失败 code=%s msg=%s" % (data.get("code"), data.get("msg"))
+        )
+    absorb(data)
+    payload = (data.get("data") or {})
+    for _ in range(max(0, pages - 1)):
+        if not payload.get("has_more"):
+            break
+        d = _wait_json(
+            lambda: _page.mouse.wheel(0, 2500), USER_POSTED_API, timeout=15000
+        )
+        if d is None:
+            break
+        absorb(d)
+        payload = d.get("data") or {}
+
+    if not nickname:
+        info = _page.evaluate(USER_INFO_JS)
+        if info:
+            nickname = info.get("nickname") or ""
+            avatar = info.get("avatar") or ""
+    return {"uid": uid, "nickname": nickname, "avatar": avatar,
+            "notes": list(by_id.values())}
