@@ -28,6 +28,42 @@ _browser = None
 _context = None
 _page = None
 
+# Cookie 状态缓存（"ok"/"missing"/"expired"/"error"/"unknown"），
+# 由 launch/search_notes/user_notes/probe_cookie 在真实探测中更新，
+# 前端调度栏展示，避免每次查状态都开一次浏览器。
+_cookie_state = {"state": "unknown", "detail": "", "checked_at": ""}
+
+
+def set_cookie_state(state, detail=""):
+    _cookie_state.update(
+        state=state,
+        detail=str(detail or "")[:300],
+        checked_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
+def get_cookie_state():
+    return dict(_cookie_state)
+
+
+def probe_cookie():
+    """打开搜索页探测登录态，返回 (state, detail)。约 10~15 秒（起一次浏览器）。"""
+    if not cookie_available():
+        return "missing", "未配置 data/xhs_cookie.txt"
+    try:
+        with browser():
+            _ensure_page()
+            _page.goto(
+                "https://www.xiaohongshu.com/search_result?keyword=F1",
+                wait_until="domcontentloaded",
+            )
+            html = _page.content() or ""
+            if "登录后查看搜索结果" in html:
+                return "expired", "Cookie 已失效，请重新导出（data/xhs_cookie.txt）"
+            return "ok", ""
+    except Exception as e:
+        return "error", "探测失败: %s" % e
+
 
 def cookie_available():
     return _COOKIE_PATH.exists() and bool(_COOKIE_PATH.read_text(encoding="utf-8").strip())
@@ -56,6 +92,7 @@ def launch():
     from playwright.sync_api import sync_playwright
     raw = _COOKIE_PATH.read_text(encoding="utf-8").strip()
     if not raw:
+        set_cookie_state("missing", "未配置 data/xhs_cookie.txt")
         raise RuntimeError("未配置小红书 Cookie（data/xhs_cookie.txt）")
     _pw = sync_playwright().start()
     try:
@@ -155,12 +192,14 @@ def search_notes(keyword):
         except Exception:
             html = ""
         if "登录后查看搜索结果" in html:
+            set_cookie_state("expired", "Cookie 已失效，请重新导出（data/xhs_cookie.txt）")
             raise RuntimeError("小红书 Cookie 已失效，请重新导出（data/xhs_cookie.txt）")
         raise RuntimeError("搜索请求未返回（可能被风控）：" + keyword)
     if not data.get("success"):
         raise RuntimeError(
             "搜索失败 code=%s msg=%s" % (data.get("code"), data.get("msg"))
         )
+    set_cookie_state("ok")
     items = (data.get("data") or {}).get("items") or []
     out = []
     for it in items:
@@ -292,6 +331,7 @@ def user_notes(uid, pages=2):
         except Exception:
             html = ""
         if "登录" in html and "xiaohongshu" in _page.url:
+            set_cookie_state("expired", "Cookie 已失效，请重新导出（data/xhs_cookie.txt）")
             raise RuntimeError("小红书 Cookie 已失效，请重新导出（data/xhs_cookie.txt）")
         raise RuntimeError("UP 主页请求未返回（可能被风控）：" + uid)
 
@@ -324,6 +364,7 @@ def user_notes(uid, pages=2):
         raise RuntimeError(
             "UP 主页接口失败 code=%s msg=%s" % (data.get("code"), data.get("msg"))
         )
+    set_cookie_state("ok")
     absorb(data)
     payload = (data.get("data") or {})
     for _ in range(max(0, pages - 1)):

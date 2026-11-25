@@ -3,6 +3,8 @@ import hashlib
 import os
 import re
 import secrets
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -96,6 +98,18 @@ async def lifespan(_app):
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
     _scheduler.start()
+
+    def _probe_xhs_cookie():
+        # 启动后延迟探测小红书 Cookie 状态（开一次浏览器，约 15 秒），
+        # 结果缓存进 xhs 模块，调度状态接口直接读缓存
+        try:
+            time.sleep(15)
+            state, detail = xhs.probe_cookie()
+            xhs.set_cookie_state(state, detail)
+        except Exception:
+            pass
+
+    threading.Thread(target=_probe_xhs_cookie, daemon=True).start()
     yield
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
@@ -568,6 +582,7 @@ def api_scheduler_status():
         "upNextRun": str(up_job.next_run_time) if up_job is not None and up_job.next_run_time else None,
         "xhsIntervalHours": xhs_interval_hours(),
         "xhsNextRun": str(xhs_job.next_run_time) if xhs_job is not None and xhs_job.next_run_time else None,
+        "xhsCookie": xhs.get_cookie_state(),
     }
 
 

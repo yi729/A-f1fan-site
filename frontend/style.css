@@ -95,6 +95,9 @@ button.primary { background: var(--red); border: none; color: #fff; padding: 9px
 #scrape-status { color: var(--muted); font-size: 13px; }
 .filter-label { color: var(--muted); font-size: 13px; display: flex; gap: 6px; align-items: center; }
 #scheduler-status { color: var(--muted); font-size: 12px; margin-left: auto; }
+#xhs-cookie-status { font-size: 12px; margin-left: 8px; }
+.xhs-cookie-warn { color: #ff6b6b; font-weight: bold; }
+.xhs-cookie-ok { color: var(--muted); }
 .post-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
 .post-top { display: flex; gap: 8px; margin-bottom: 8px; }
 .platform { background: #fb7299; color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 4px; }

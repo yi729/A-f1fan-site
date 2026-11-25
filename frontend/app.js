@@ -575,6 +575,24 @@ document.getElementById("btn-scrape-xhs").addEventListener("click", () => {
 function showSchedulerStatus() {
   api("/api/scheduler/status").then((s) => {
     const el = document.getElementById("scheduler-status");
+    const cookieEl = document.getElementById("xhs-cookie-status");
+    if (cookieEl) {
+      const c = s.xhsCookie || {};
+      if (c.state === "missing") {
+        cookieEl.textContent = "⚠ 小红书 Cookie 未配置";
+        cookieEl.className = "xhs-cookie-warn";
+      } else if (c.state === "expired" || c.state === "error") {
+        cookieEl.textContent = "⚠ 小红书 Cookie 失效（" + (c.checkedAt || "未知") + "）";
+        cookieEl.className = "xhs-cookie-warn";
+        cookieEl.title = c.detail || "";
+      } else if (c.state === "ok") {
+        cookieEl.textContent = "小红书 Cookie 正常";
+        cookieEl.className = "xhs-cookie-ok";
+      } else {
+        cookieEl.textContent = "";
+        cookieEl.className = "";
+      }
+    }
     if (!s.running) {
       el.textContent = "定时抓取未启用";
       return;
