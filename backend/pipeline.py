@@ -18,6 +18,7 @@ import time
 
 import bilibili
 import db
+import health
 import race
 import summarize
 
@@ -137,7 +138,9 @@ def run(limit_per_category=12, race_budget=RACE_SEARCH_BUDGET):
     if not _run_lock.acquire(blocking=False):
         return {"total": 0, "added": 0, "error": None, "busy": True}
     try:
-        return _run(limit_per_category, race_budget)
+        result = _run(limit_per_category, race_budget)
+        health.report("bilibili", not result.get("error"), result.get("error") or "")
+        return result
     finally:
         _run_lock.release()
 
@@ -203,7 +206,9 @@ def run_xhs(budget=XHS_BUDGET, per_kw=XHS_PER_KW):
     if not _run_lock.acquire(blocking=False):
         return {"total": 0, "added": 0, "error": None, "busy": True}
     try:
-        return _run_xhs(budget, per_kw)
+        result = _run_xhs(budget, per_kw)
+        health.report("xiaohongshu", not result.get("error"), result.get("error") or "")
+        return result
     finally:
         _run_lock.release()
 

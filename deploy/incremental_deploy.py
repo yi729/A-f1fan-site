@@ -23,6 +23,7 @@ FILES = [
     ("backend/main.py", "/opt/f1-site/backend/main.py"),
     ("backend/pipeline.py", "/opt/f1-site/backend/pipeline.py"),
     ("backend/xhs.py", "/opt/f1-site/backend/xhs.py"),
+    ("backend/health.py", "/opt/f1-site/backend/health.py"),
     ("deploy/refill_ai_subs.py", "/opt/f1-site/deploy/refill_ai_subs.py"),
     ("frontend/index.html", "/opt/f1-site/frontend/index.html"),
     ("frontend/app.js", "/opt/f1-site/frontend/app.js"),

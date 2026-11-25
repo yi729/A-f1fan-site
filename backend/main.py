@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 import db
 import f1
+import health
 import pipeline
 import upsub
 import xhs
@@ -583,6 +584,7 @@ def api_scheduler_status():
         "xhsIntervalHours": xhs_interval_hours(),
         "xhsNextRun": str(xhs_job.next_run_time) if xhs_job is not None and xhs_job.next_run_time else None,
         "xhsCookie": xhs.get_cookie_state(),
+        "health": health.get(),
     }
 
 

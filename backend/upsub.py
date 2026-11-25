@@ -22,6 +22,7 @@ import requests
 
 import bilibili
 import db
+import health
 import race
 import summarize
 
@@ -129,7 +130,10 @@ def run():
     if not _run_lock.acquire(blocking=False):
         return {"checked": 0, "added": 0, "errors": [], "busy": True}
     try:
-        return _run()
+        result = _run()
+        errs = result.get("errors") or []
+        health.report("upcheck", not errs, "; ".join(errs))
+        return result
     finally:
         _run_lock.release()
 

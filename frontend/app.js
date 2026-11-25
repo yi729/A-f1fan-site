@@ -593,6 +593,25 @@ function showSchedulerStatus() {
         cookieEl.className = "";
       }
     }
+    const healthEl = document.getElementById("health-status");
+    if (healthEl) {
+      const h = s.health || {};
+      const bad = [];
+      for (const k of ["bilibili", "xiaohongshu", "upcheck"]) {
+        const it = h[k];
+        if (it && it.fails >= 2) {
+          bad.push({ label: it.label, fails: it.fails, detail: it.detail, lastFail: it.lastFail });
+        }
+      }
+      if (bad.length) {
+        healthEl.textContent = "⚠ 抓取异常：" + bad.map((b) => b.label + "连续失败 " + b.fails + " 次").join("；");
+        healthEl.className = "health-warn";
+        healthEl.title = bad.map((b) => b.label + "（最近 " + (b.lastFail || "—") + "）：" + (b.detail || "无详情")).join("\n");
+      } else {
+        healthEl.textContent = "";
+        healthEl.className = "";
+      }
+    }
     if (!s.running) {
       el.textContent = "定时抓取未启用";
       return;
